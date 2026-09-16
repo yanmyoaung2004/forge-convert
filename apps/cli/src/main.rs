@@ -446,14 +446,18 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             output,
             preset,
         } => {
-            if preset != "web" {
-                return Err(ForgeError::InvalidConfiguration(format!(
-                    "unknown preset {preset:?} (only \"web\" in this build)"
-                )));
-            }
-            let web = forge_core::Preset::web_optimized();
+            let named = forge_core::Preset::by_key(&preset).ok_or_else(|| {
+                let keys: Vec<String> = forge_core::Preset::builtins()
+                    .iter()
+                    .map(|preset| preset.key())
+                    .collect();
+                ForgeError::InvalidConfiguration(format!(
+                    "unknown preset {preset:?} (choose: {})",
+                    keys.join(", ")
+                ))
+            })?;
             let before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
-            let options = web.options.validated()?;
+            let options = named.options.validated()?;
             let dir = output.clone().map_or_else(
                 || {
                     input
@@ -469,7 +473,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             };
             let request = ConversionRequest {
                 inputs: vec![input.clone()],
-                output_format: web.output_format,
+                output_format: named.output_format,
                 output: output_target,
                 options,
             }
@@ -497,7 +501,10 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 0.0
             };
             println!("{}", out_path.display());
-            eprintln!("before: {before} bytes; after: {after} bytes; saved: {savings:.1}%");
+            eprintln!(
+                "preset {}: before: {before} bytes; after: {after} bytes; saved: {savings:.1}%",
+                named.name
+            );
             Ok(())
         }
     }
