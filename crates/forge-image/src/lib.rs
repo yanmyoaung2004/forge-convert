@@ -6,10 +6,11 @@
 //! - RGBA → alpha-less targets flatten over [`BackgroundPolicy`] first.
 
 use forge_core::{
-    BackgroundPolicy, CanonicalImage, ColorSpace, ConversionOptions, ImageDimensions, ImageFormat,
-    PixelFormat, Result,
+    BackgroundPolicy, CanonicalImage, ColorSpace, Compression, ConversionOptions, ImageDimensions,
+    ImageFormat, PixelFormat, ResizeFilter, ResizeSpec, Result,
 };
 use forge_core::{ForgeError, ImageDecoder, ImageEncoder, TransformStep};
+
 #[derive(Debug, Default)]
 pub struct ForgeImageDecoder;
 
@@ -100,9 +101,19 @@ impl ImageEncoder for ForgeImageEncoder {
             image
         };
         match target {
-            ImageFormat::Webp => encode_webp_lossy(image, options.quality),
-            ImageFormat::Png => encode_png(image),
-            ImageFormat::Jpeg => encode_jpeg(image, options.quality),
+            ImageFormat::Webp => match options.compression {
+                Some(Compression::WebpLossless) => encode_webp_lossless(image),
+                Some(Compression::WebpLossy { quality }) => encode_webp_lossy(image, quality),
+                _ => encode_webp_lossy(image, options.quality),
+            },
+            ImageFormat::Png => match options.compression {
+                Some(Compression::Png { level }) => encode_png_level(image, level),
+                _ => encode_png(image),
+            },
+            ImageFormat::Jpeg => match options.compression {
+                Some(Compression::Jpeg { quality }) => encode_jpeg(image, quality),
+                _ => encode_jpeg(image, options.quality),
+            },
             ImageFormat::Bmp | ImageFormat::Tiff => encode_via_image(image, target),
             ImageFormat::Pdf => Err(ForgeError::UnsupportedFormat(
                 "PDF is written by forge-pdf, not the image encoder".to_string(),
@@ -110,17 +121,21 @@ impl ImageEncoder for ForgeImageEncoder {
         }
     }
 }
-
-/// Resize step: fit inside `options.max_dimensions`, Lanczos3.
+/// Resize step: explicit `options.resize` wins; legacy
+/// `options.max_dimensions` falls back to fit-inside (never upscale).
+/// `FitWithinStep` stays as a deprecated alias (same behavior).
 #[derive(Debug, Default)]
-pub struct FitWithinStep;
+pub struct ResizeStep;
 
-impl TransformStep for FitWithinStep {
+impl TransformStep for ResizeStep {
     fn name(&self) -> &'static str {
-        "fit-within"
+        "resize"
     }
 
     fn apply(&self, image: CanonicalImage, options: &ConversionOptions) -> Result<CanonicalImage> {
+        if let Some(spec) = options.resize {
+            return apply_resize_spec(image, spec);
+        }
         let Some(max) = options.max_dimensions else {
             return Ok(image);
         };
@@ -128,9 +143,12 @@ impl TransformStep for FitWithinStep {
         if target == image.dimensions {
             return Ok(image);
         }
-        resize_canonical(&image, target)
+        resize_canonical(&image, target, ResizeFilter::Lanczos3)
     }
 }
+
+/// Legacy name: identical behavior (fit-inside via `max_dimensions`).
+pub type FitWithinStep = ResizeStep;
 
 /// Convert `ImageFormat` → `image::ImageFormat` (PDF has no mapping).
 fn to_image_format(format: ImageFormat) -> Option<image::ImageFormat> {
@@ -233,14 +251,15 @@ fn flatten(image: &CanonicalImage, background: BackgroundPolicy) -> CanonicalIma
     }
 }
 
-/// Lanczos3 resize to `target` (aspect already fitted by caller).
-fn resize_canonical(image: &CanonicalImage, target: ImageDimensions) -> Result<CanonicalImage> {
+/// Resize to `target` with the requested filter (exact dims, aspect
+/// decisions made by the caller).
+fn resize_canonical(
+    image: &CanonicalImage,
+    target: ImageDimensions,
+    filter: ResizeFilter,
+) -> Result<CanonicalImage> {
     let dyn_image = to_dynamic(image)?;
-    let resized = dyn_image.resize_exact(
-        target.width,
-        target.height,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let resized = dyn_image.resize_exact(target.width, target.height, to_filter(filter));
     let rgba = resized.to_rgba8();
     Ok(CanonicalImage {
         dimensions: target,
@@ -251,11 +270,107 @@ fn resize_canonical(image: &CanonicalImage, target: ImageDimensions) -> Result<C
     })
 }
 
+/// Map domain filter → `image` filter.
+fn to_filter(filter: ResizeFilter) -> image::imageops::FilterType {
+    match filter {
+        ResizeFilter::Lanczos3 => image::imageops::FilterType::Lanczos3,
+        ResizeFilter::CatmullRom => image::imageops::FilterType::CatmullRom,
+        ResizeFilter::Gaussian => image::imageops::FilterType::Gaussian,
+        ResizeFilter::Nearest => image::imageops::FilterType::Nearest,
+    }
+}
+
+/// Apply an explicit [`ResizeSpec`]: exact / fit (honors `upscale`) /
+/// fill (cover + center-crop). No-op fast paths avoid resampling.
+fn apply_resize_spec(image: CanonicalImage, spec: ResizeSpec) -> Result<CanonicalImage> {
+    match spec {
+        ResizeSpec::Exact { dimensions, filter } => {
+            if dimensions == image.dimensions {
+                return Ok(image);
+            }
+            resize_canonical(&image, dimensions, filter)
+        }
+        ResizeSpec::Fit {
+            bounds,
+            filter,
+            upscale,
+        } => {
+            if !upscale
+                && image.dimensions.width <= bounds.width
+                && image.dimensions.height <= bounds.height
+            {
+                return Ok(image);
+            }
+            let target = image.dimensions.scaled_to_fit(bounds);
+            if target == image.dimensions {
+                return Ok(image);
+            }
+            resize_canonical(&image, target, filter)
+        }
+        ResizeSpec::Fill {
+            bounds,
+            filter,
+            upscale,
+        } => {
+            if !upscale
+                && image.dimensions.width <= bounds.width
+                && image.dimensions.height <= bounds.height
+            {
+                // Still need exact bounds: upscale required → honor `upscale: false`
+                // by returning the source (never enlarge silently).
+                return Ok(image);
+            }
+            let covered = image.dimensions.scaled_to_cover(bounds);
+            let resized = resize_canonical(&image, covered, filter)?;
+            center_crop(&resized, bounds)
+        }
+    }
+}
+
+/// Center-crop `image` to exactly `target` (clamped, never panics).
+fn center_crop(image: &CanonicalImage, target: ImageDimensions) -> Result<CanonicalImage> {
+    if image.dimensions == target {
+        return Ok(image.clone());
+    }
+    let dyn_image = to_dynamic(image)?;
+    let rgba = dyn_image.to_rgba8();
+    let (ox, oy) = image.dimensions.center_crop_origin(target);
+    // Clamp crop box inside the buffer.
+    let ox = ox.min(image.dimensions.width.saturating_sub(target.width));
+    let oy = oy.min(image.dimensions.height.saturating_sub(target.height));
+    let mut pixels = Vec::with_capacity(target.width as usize * target.height as usize * 4);
+    for row in 0..target.height {
+        let src_y = oy + row;
+        for col in 0..target.width {
+            let src_x = ox + col;
+            let pixel = rgba.get_pixel(src_x, src_y);
+            pixels.extend_from_slice(&pixel.0);
+        }
+    }
+    Ok(CanonicalImage {
+        dimensions: target,
+        pixel_format: PixelFormat::Rgba8,
+        color_space: image.color_space,
+        pixels,
+        has_alpha: true,
+    })
+}
+
 /// PNG via `image` (default compression; `oxipng` later in Phase 8).
 /// Preserves alpha: RGBA/La in → RGBA out, others → RGB out.
 fn encode_png(image: &CanonicalImage) -> Result<Vec<u8>> {
+    encode_png_level(image, 6)
+}
+
+/// PNG with explicit level 0–9: 0–2 → Fast, 3–6 → Default, 7–9 → Best.
+fn encode_png_level(image: &CanonicalImage, level: u8) -> Result<Vec<u8>> {
     use image::codecs::png::{CompressionType, FilterType, PngEncoder};
     use image::{ColorType, ExtendedColorType};
+    let compression = match level {
+        0..=2 => CompressionType::Fast,
+        3..=6 => CompressionType::Default,
+        _ => CompressionType::Best,
+    };
     let dyn_image = to_dynamic(image)?;
     // Own the encoded-from buffer so the borrowed slice outlives the call.
     enum Owned {
@@ -273,8 +388,7 @@ fn encode_png(image: &CanonicalImage) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     {
         use image::ImageEncoder as _;
-        let encoder =
-            PngEncoder::new_with_quality(&mut out, CompressionType::Default, FilterType::Adaptive);
+        let encoder = PngEncoder::new_with_quality(&mut out, compression, FilterType::Adaptive);
         encoder
             .write_image(
                 bytes,
@@ -310,6 +424,18 @@ fn encode_webp_lossy(image: &CanonicalImage, quality: u8) -> Result<Vec<u8>> {
     );
     let quality = f32::from(quality.clamp(1, 100)) * WEBP_QUALITY_SCALE;
     Ok(encoder.encode(quality).to_vec())
+}
+
+/// Lossless WebP via libwebp `encode_lossless` (exact pixels, bigger files).
+fn encode_webp_lossless(image: &CanonicalImage) -> Result<Vec<u8>> {
+    let dyn_image = to_dynamic(image)?;
+    let rgba = dyn_image.to_rgba8();
+    let encoder = webp::Encoder::from_rgba(
+        rgba.as_raw(),
+        image.dimensions.width,
+        image.dimensions.height,
+    );
+    Ok(encoder.encode_lossless().to_vec())
 }
 
 /// BMP/TIFF via `image` guessing from raw pixels.
@@ -411,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_fit_within_step_resizes() {
-        let step = FitWithinStep;
+        let step = ResizeStep;
         let image = rgba_fixture();
         let opts = ConversionOptions {
             max_dimensions: Some(ImageDimensions::new(2, 2).unwrap()),
@@ -425,5 +551,108 @@ mod tests {
             .apply(image.clone(), &ConversionOptions::default())
             .unwrap();
         assert_eq!(same.dimensions, image.dimensions);
+    }
+
+    #[test]
+    fn test_resize_exact_1020x900_to_800x600() {
+        // The user's example: explicit exact resize wins over aspect.
+        let step = ResizeStep;
+        let image = CanonicalImage {
+            dimensions: ImageDimensions::new(1020, 900).unwrap(),
+            pixel_format: PixelFormat::Rgba8,
+            color_space: ColorSpace::Srgb,
+            pixels: [128, 64, 32, 255].repeat(1020 * 900),
+            has_alpha: true,
+        };
+        let opts = ConversionOptions {
+            resize: Some(ResizeSpec::Exact {
+                dimensions: ImageDimensions::new(800, 600).unwrap(),
+                filter: ResizeFilter::Lanczos3,
+            }),
+            ..Default::default()
+        };
+        let out = step.apply(image, &opts).unwrap();
+        assert_eq!(out.dimensions, ImageDimensions::new(800, 600).unwrap());
+        assert_eq!(out.pixels.len(), 800 * 600 * 4);
+    }
+
+    #[test]
+    fn test_resize_fit_no_upscale_and_fill_crops() {
+        let step = ResizeStep;
+        let small = CanonicalImage {
+            dimensions: ImageDimensions::new(4, 3).unwrap(),
+            pixel_format: PixelFormat::Rgba8,
+            color_space: ColorSpace::Srgb,
+            pixels: [9, 9, 9, 255].repeat(4 * 3),
+            has_alpha: true,
+        };
+        let opts = ConversionOptions {
+            resize: Some(ResizeSpec::Fit {
+                bounds: ImageDimensions::new(800, 600).unwrap(),
+                filter: ResizeFilter::CatmullRom,
+                upscale: false,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            step.apply(small.clone(), &opts).unwrap().dimensions,
+            small.dimensions
+        );
+        // Fill 3×2 → cover+crop to exactly 3×2.
+        let opts = ConversionOptions {
+            resize: Some(ResizeSpec::Fill {
+                bounds: ImageDimensions::new(3, 2).unwrap(),
+                filter: ResizeFilter::Nearest,
+                upscale: true,
+            }),
+            ..Default::default()
+        };
+        let out = step.apply(rgba_fixture(), &opts).unwrap();
+        assert_eq!(out.dimensions, ImageDimensions::new(3, 2).unwrap());
+    }
+
+    #[test]
+    fn test_png_levels_order_and_webp_lossless_decodes() {
+        let encoder = ForgeImageEncoder;
+        let opts_for = |compression: Compression| ConversionOptions {
+            compression: Some(compression),
+            ..Default::default()
+        };
+        let fast = encoder
+            .encode(
+                &rgba_fixture(),
+                ImageFormat::Png,
+                &opts_for(Compression::Png { level: 0 }),
+            )
+            .unwrap();
+        let best = encoder
+            .encode(
+                &rgba_fixture(),
+                ImageFormat::Png,
+                &opts_for(Compression::Png { level: 9 }),
+            )
+            .unwrap();
+        // Same pixels, both valid PNG; best compresses at least as well.
+        assert_eq!(
+            &fast[0..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        assert!(
+            best.len() <= fast.len(),
+            "level 9 ≤ level 0 ({} vs {})",
+            best.len(),
+            fast.len()
+        );
+        let lossless = encoder
+            .encode(
+                &rgba_fixture(),
+                ImageFormat::Webp,
+                &opts_for(Compression::WebpLossless),
+            )
+            .unwrap();
+        let back = ForgeImageDecoder
+            .decode(&lossless, Some(ImageFormat::Webp))
+            .unwrap();
+        assert_eq!(back.dimensions, rgba_fixture().dimensions);
     }
 }

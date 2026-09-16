@@ -97,6 +97,14 @@ export const api = {
     quality?: number;
     maxWidth?: number;
     maxHeight?: number;
+    width?: number;
+    height?: number;
+    fit?: string;
+    fill?: string;
+    filter?: string;
+    upscale?: boolean;
+    pngLevel?: number;
+    webpLossless?: boolean;
     stripMetadata?: boolean;
     onCollision?: string;
   }) =>
@@ -108,6 +116,14 @@ export const api = {
         quality: args.quality ?? null,
         max_width: args.maxWidth ?? null,
         max_height: args.maxHeight ?? null,
+        width: args.width ?? null,
+        height: args.height ?? null,
+        fit: args.fit ?? null,
+        fill: args.fill ?? null,
+        filter: args.filter ?? null,
+        upscale: args.upscale ?? null,
+        png_level: args.pngLevel ?? null,
+        webp_lossless: args.webpLossless ?? null,
         strip_metadata: args.stripMetadata ?? null,
         on_collision: args.onCollision ?? null,
       },

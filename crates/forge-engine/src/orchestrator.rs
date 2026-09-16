@@ -295,6 +295,8 @@ mod tests {
             options: ConversionOptions {
                 quality: 80,
                 max_dimensions: None,
+                resize: None,
+                compression: None,
                 metadata: MetadataPolicy::Preserve,
                 background: BackgroundPolicy::default(),
                 on_collision: CollisionPolicy::RenameAuto,

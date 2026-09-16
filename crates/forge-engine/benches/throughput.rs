@@ -76,7 +76,7 @@ fn bench_batch_10_png_to_webp(criterion: &mut Criterion) {
     use forge_engine::{
         BatchConfig, CancelFlag, EngineDeps, NullSink, Orchestrator, StdFileSystem,
     };
-    use forge_image::{FitWithinStep, ForgeImageDecoder, ForgeImageEncoder};
+    use forge_image::{ForgeImageDecoder, ForgeImageEncoder, ResizeStep};
     use std::sync::Arc;
     // 10 PNG files in a temp dir (setup outside the timed loop).
     let dir = std::env::temp_dir().join("forgeconvert-bench-batch");
@@ -118,7 +118,7 @@ fn bench_batch_10_png_to_webp(criterion: &mut Criterion) {
                         let fs = StdFileSystem;
                         let decoder = ForgeImageDecoder;
                         let encoder = ForgeImageEncoder;
-                        let fit = FitWithinStep;
+                        let fit = ResizeStep;
                         let transforms: [&dyn forge_core::TransformStep; 1] = [&fit];
                         let engine = Orchestrator::new(EngineDeps {
                             decoder: &decoder,

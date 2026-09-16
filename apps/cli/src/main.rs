@@ -14,7 +14,7 @@ use forge_core::{
     MetadataPolicy, NeverCancel, OutputTarget, PdfRenderer as _, PdfWriteSpec, PdfWriter as _,
 };
 use forge_engine::{BatchConfig, CancelFlag, EngineDeps, NullSink, Orchestrator, StdFileSystem};
-use forge_image::{FitWithinStep, ForgeImageDecoder, ForgeImageEncoder};
+use forge_image::{ForgeImageDecoder, ForgeImageEncoder, ResizeStep};
 use forge_pdf::{ForgePdfWriter, StubPdfRenderer};
 
 #[derive(Debug, Parser)]
@@ -38,12 +38,36 @@ enum Command {
         /// Quality 1–100 (lossy targets).
         #[arg(long, default_value_t = 80)]
         quality: u8,
-        /// Max width (aspect preserved).
-        #[arg(long)]
+        /// Exact width (needs --height; forces size, aspect may change).
+        #[arg(long, requires = "height")]
+        width: Option<u32>,
+        /// Exact height (needs --width; forces size, aspect may change).
+        #[arg(long, requires = "width")]
+        height: Option<u32>,
+        /// Fit inside WIDTHxHEIGHT (e.g. 800x600), aspect kept.
+        #[arg(long, value_name = "WIDTHxHEIGHT", conflicts_with_all = ["width", "max_width"])]
+        fit: Option<String>,
+        /// Cover WIDTHxHEIGHT then center-crop, aspect kept.
+        #[arg(long, value_name = "WIDTHxHEIGHT", conflicts_with_all = ["width", "max_width"])]
+        fill: Option<String>,
+        /// Max width, legacy fit-inside (aspect preserved).
+        #[arg(long, conflicts_with = "fit")]
         max_width: Option<u32>,
-        /// Max height (aspect preserved).
-        #[arg(long)]
+        /// Max height, legacy fit-inside (aspect preserved).
+        #[arg(long, conflicts_with = "fit")]
         max_height: Option<u32>,
+        /// Resample filter.
+        #[arg(long, value_enum, default_value_t = CliFilter::Lanczos3)]
+        filter: CliFilter,
+        /// Allow upscaling small images to fit/fill boxes.
+        #[arg(long, default_value_t = false)]
+        upscale: bool,
+        /// PNG compression level 0 (fast) – 9 (smallest).
+        #[arg(long, value_name = "0-9")]
+        png_level: Option<u8>,
+        /// WebP lossless (exact pixels) instead of lossy quality.
+        #[arg(long, default_value_t = false, conflicts_with = "quality")]
+        webp_lossless: bool,
         /// Strip metadata.
         #[arg(long, default_value_t = false)]
         strip_metadata: bool,
@@ -144,6 +168,33 @@ impl CliFormat {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliPage {
+    A4,
+    Letter,
+}
+
+/// Resample filter (maps 1:1 to domain `ResizeFilter`).
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+enum CliFilter {
+    #[default]
+    Lanczos3,
+    CatmullRom,
+    Gaussian,
+    Nearest,
+}
+
+impl CliFilter {
+    fn to_domain(self) -> forge_core::ResizeFilter {
+        match self {
+            Self::Lanczos3 => forge_core::ResizeFilter::Lanczos3,
+            Self::CatmullRom => forge_core::ResizeFilter::CatmullRom,
+            Self::Gaussian => forge_core::ResizeFilter::Gaussian,
+            Self::Nearest => forge_core::ResizeFilter::Nearest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliCollision {
     Rename,
     Replace,
@@ -161,12 +212,6 @@ impl CliCollision {
             Self::Fail => CollisionPolicy::Fail,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum CliPage {
-    A4,
-    Letter,
 }
 
 /// Stderr progress sink (stdout stays clean for scripts).
@@ -228,11 +273,24 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             to,
             output,
             quality,
+            width,
+            height,
+            fit,
+            fill,
             max_width,
             max_height,
+            filter,
+            upscale,
+            png_level,
+            webp_lossless,
             strip_metadata,
             on_collision,
         } => {
+            let target = to.to_image_format();
+            let resize = parse_resize(
+                width, height, fit, fill, max_width, max_height, filter, upscale,
+            )?;
+            let compression = parse_compression(target, quality, png_level, webp_lossless)?;
             let max_dimensions = match (max_width, max_height) {
                 (None, None) => None,
                 (w, h) => Some(forge_core::ImageDimensions::new(
@@ -243,6 +301,8 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let options = ConversionOptions {
                 quality,
                 max_dimensions,
+                resize,
+                compression,
                 metadata: if strip_metadata {
                     MetadataPolicy::Remove
                 } else {
@@ -274,7 +334,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let fs = StdFileSystem;
             let decoder = ForgeImageDecoder;
             let encoder = ForgeImageEncoder;
-            let fit = FitWithinStep;
+            let fit = ResizeStep;
             let transforms: [&dyn forge_core::TransformStep; 1] = [&fit];
             let engine = Orchestrator::new(EngineDeps {
                 decoder: &decoder,
@@ -500,7 +560,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let fs = StdFileSystem;
             let decoder = ForgeImageDecoder;
             let encoder = ForgeImageEncoder;
-            let fit = FitWithinStep;
+            let fit = ResizeStep;
             let transforms: [&dyn forge_core::TransformStep; 1] = [&fit];
             let engine = Orchestrator::new(EngineDeps {
                 decoder: &decoder,
@@ -622,6 +682,7 @@ fn record_history(
     use forge_core::HistoryStore as _;
     let _ = db.record(entry);
 }
+
 /// `--output foo.webp` (has image extension) → explicit file;
 /// `--output ./dir` → directory. Nonexistent paths with an image
 /// extension count as files so `convert in.png --output out.webp` works.
@@ -635,6 +696,101 @@ fn is_explicit_file(path: &Path) -> bool {
         .is_some()
 }
 
+/// Parse `WIDTHxHEIGHT` (e.g. `800x600`, case-insensitive `x`).
+fn parse_box(raw: &str) -> Result<forge_core::ImageDimensions, ForgeError> {
+    let (w, h) = raw.split_once(['x', 'X']).ok_or_else(|| {
+        ForgeError::InvalidConfiguration(format!("expected WIDTHxHEIGHT, got {raw:?}"))
+    })?;
+    let width: u32 = w
+        .trim()
+        .parse()
+        .map_err(|_| ForgeError::InvalidConfiguration(format!("bad width in {raw:?}")))?;
+    let height: u32 = h
+        .trim()
+        .parse()
+        .map_err(|_| ForgeError::InvalidConfiguration(format!("bad height in {raw:?}")))?;
+    forge_core::ImageDimensions::new(width, height)
+}
+
+/// Build the explicit [`ResizeSpec`] from convert flags.
+/// Precedence: `--width/--height` exact > `--fill` > `--fit`.
+/// Legacy `--max-*` flows through `max_dimensions` (never upscale).
+#[allow(clippy::too_many_arguments)]
+fn parse_resize(
+    width: Option<u32>,
+    height: Option<u32>,
+    fit: Option<String>,
+    fill: Option<String>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+    filter: CliFilter,
+    upscale: bool,
+) -> Result<Option<forge_core::ResizeSpec>, ForgeError> {
+    use forge_core::ResizeSpec;
+    // Exact wins when present. (`--height` requires `--width` and vice versa,
+    // enforced by clap; legacy max-* without explicit resize stays `None`.)
+    if width.is_some() || height.is_some() {
+        let (Some(w), Some(h)) = (width, height) else {
+            return Err(ForgeError::InvalidConfiguration(
+                "--width and --height must be given together".to_string(),
+            ));
+        };
+        return Ok(Some(ResizeSpec::Exact {
+            dimensions: forge_core::ImageDimensions::new(w, h)?,
+            filter: filter.to_domain(),
+        }));
+    }
+    if let Some(raw) = fill {
+        return Ok(Some(ResizeSpec::Fill {
+            bounds: parse_box(&raw)?,
+            filter: filter.to_domain(),
+            upscale: upscale || max_width.is_some() || max_height.is_some(),
+        }));
+    }
+    if let Some(raw) = fit {
+        return Ok(Some(ResizeSpec::Fit {
+            bounds: parse_box(&raw)?,
+            filter: filter.to_domain(),
+            upscale,
+        }));
+    }
+    Ok(None)
+}
+
+/// Build the [`Compression`] override from convert flags.
+/// - `--png-level N` → PNG level (PNG targets only; else ignored later).
+/// - `--webp-lossless` → WebP lossless (WebP targets only).
+/// - JPEG always uses `--quality` (explicit or default 80).
+fn parse_compression(
+    target: ImageFormat,
+    quality: u8,
+    png_level: Option<u8>,
+    webp_lossless: bool,
+) -> Result<Option<forge_core::Compression>, ForgeError> {
+    use forge_core::Compression;
+    if target == ImageFormat::Png {
+        if let Some(level) = png_level {
+            if level > 9 {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "PNG level must be 0-9, got {level}"
+                )));
+            }
+            return Ok(Some(Compression::Png { level }));
+        }
+        return Ok(None);
+    }
+    if target == ImageFormat::Webp && webp_lossless {
+        return Ok(Some(Compression::WebpLossless));
+    }
+    if target == ImageFormat::Jpeg {
+        return Ok(Some(Compression::Jpeg { quality }));
+    }
+    if target == ImageFormat::Webp {
+        return Ok(Some(Compression::WebpLossy { quality }));
+    }
+    Ok(None)
+}
+
 /// Synchronous single-file conversion for the batch worker threads.
 fn convert_one_sync(
     input: PathBuf,
@@ -645,7 +801,7 @@ fn convert_one_sync(
     let fs = StdFileSystem;
     let decoder = ForgeImageDecoder;
     let encoder = ForgeImageEncoder;
-    let fit = FitWithinStep;
+    let fit = ResizeStep;
     let transforms: [&dyn forge_core::TransformStep; 1] = [&fit];
     let engine = Orchestrator::new(EngineDeps {
         decoder: &decoder,

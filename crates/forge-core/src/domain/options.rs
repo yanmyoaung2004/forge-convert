@@ -71,14 +71,124 @@ impl ImageDimensions {
         if self.width <= max.width && self.height <= max.height {
             return self;
         }
-        let scale = f64::from(max.width) / f64::from(self.width);
-        let scale = scale.min(f64::from(max.height) / f64::from(self.height));
+        self.scaled_to_fit(max)
+    }
+
+    /// Scale factor to fit inside `bounds` (aspect kept, may upscale).
+    fn scale_to_fit(self, bounds: Self) -> f64 {
+        (f64::from(bounds.width) / f64::from(self.width))
+            .min(f64::from(bounds.height) / f64::from(self.height))
+    }
+
+    /// Dimensions after fit-inside scaling (aspect kept, may upscale).
+    #[must_use]
+    pub fn scaled_to_fit(self, bounds: Self) -> Self {
+        let scale = self.scale_to_fit(bounds);
         let width = (f64::from(self.width) * scale).round().max(1.0) as u32;
         let height = (f64::from(self.height) * scale).round().max(1.0) as u32;
         Self { width, height }
     }
+
+    /// Dimensions after cover scaling (aspect kept, then crop to bounds).
+    #[must_use]
+    pub fn scaled_to_cover(self, bounds: Self) -> Self {
+        let scale = (f64::from(bounds.width) / f64::from(self.width))
+            .max(f64::from(bounds.height) / f64::from(self.height));
+        let width = (f64::from(self.width) * scale).round().max(1.0) as u32;
+        let height = (f64::from(self.height) * scale).round().max(1.0) as u32;
+        Self { width, height }
+    }
+
+    /// Center-crop box of `target` inside `self` (assumes `self >= target`
+    /// per axis; clamps defensively so adapters never panic).
+    #[must_use]
+    pub fn center_crop_origin(self, target: Self) -> (u32, u32) {
+        (
+            self.width.saturating_sub(target.width) / 2,
+            self.height.saturating_sub(target.height) / 2,
+        )
+    }
 }
 
+/// How to resample when resizing (maps to `image::imageops::FilterType`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ResizeFilter {
+    /// Fast, smooth enough for downscales (default).
+    #[default]
+    Lanczos3,
+    /// Smooth bicubic-ish (CatmullRom).
+    CatmullRom,
+    /// Soft gaussian blur-ish.
+    Gaussian,
+    /// Blocky but fastest (pixel art, masks).
+    Nearest,
+}
+
+/// Explicit resize request: exact `width`×`height` wins; otherwise fit/fill.
+///
+/// Semantics (all preserve correctness, never stretch silently):
+/// - `Exact`: force exact dimensions (may change aspect — explicit opt-in).
+/// - `Fit`: scale down (or up, if `upscale`) to fit INSIDE the box, aspect kept.
+/// - `Fill`: scale to COVER the box then center-crop, aspect kept.
+/// - `None` (no `ResizeSpec`): keep source dimensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResizeSpec {
+    /// Force exact output size (aspect may change).
+    Exact {
+        dimensions: ImageDimensions,
+        filter: ResizeFilter,
+    },
+    /// Fit inside the box, aspect preserved. `upscale: false` never enlarges.
+    Fit {
+        bounds: ImageDimensions,
+        filter: ResizeFilter,
+        upscale: bool,
+    },
+    /// Cover the box then center-crop, aspect preserved.
+    Fill {
+        bounds: ImageDimensions,
+        filter: ResizeFilter,
+        upscale: bool,
+    },
+}
+
+impl ResizeSpec {
+    /// Validate bounds (non-zero guaranteed by `ImageDimensions::new`).
+    /// Exact with equal dims is a no-op at apply time, not an error.
+    #[must_use]
+    pub fn filter(self) -> ResizeFilter {
+        match self {
+            Self::Exact { filter, .. } | Self::Fit { filter, .. } | Self::Fill { filter, .. } => {
+                filter
+            }
+        }
+    }
+}
+
+/// Per-format compression tuning. Precedence: when `compression` is set,
+/// its embedded quality wins for that format; otherwise `quality` applies.
+/// `None` (= today's behavior): PNG default level, JPEG/WebP at `quality`.
+/// Mismatched variants are ignored (e.g. `Png{..}` for a JPEG target
+/// falls back to `quality`) — never an error, never silent magic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Compression {
+    /// PNG: level 0 (fast) – 9 (smallest) + adaptive filtering.
+    /// Maps to `png::CompressionType::Default/Fast/Best`.
+    Png { level: u8 },
+    /// JPEG: quality 1–100 (validated against `quality` when both set:
+    /// explicit `quality` field wins; this mirrors it for clarity).
+    Jpeg { quality: u8 },
+    /// WebP lossy quality 1–100 (libwebp `encode(q)`).
+    WebpLossy { quality: u8 },
+    /// WebP lossless (VP8L via `image-webp`).
+    WebpLossless,
+}
+
+impl Default for Compression {
+    fn default() -> Self {
+        Self::WebpLossy { quality: 80 }
+    }
+}
 /// Descriptive metadata surfaced by inspection (spec §19 / Master §24).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImageMetadata {
@@ -151,8 +261,14 @@ impl PageRange {
 pub struct ConversionOptions {
     /// 1–100. Meaningful for lossy targets (JPEG, lossy WebP).
     pub quality: u8,
-    /// Optional max bounds; aspect ratio preserved.
+    /// Legacy max bounds (fit-inside, aspect kept, never upscale).
+    /// Prefer `resize`; when both are set, `resize` wins.
     pub max_dimensions: Option<ImageDimensions>,
+    /// Explicit resize (exact / fit / fill + filter). `None` = keep size.
+    pub resize: Option<ResizeSpec>,
+    /// Per-format compression tuning. `None` = today's defaults
+    /// (PNG default level, JPEG/WebP at `quality`).
+    pub compression: Option<Compression>,
     /// Preserve or strip metadata.
     pub metadata: MetadataPolicy,
     /// Background when flattening alpha onto alpha-less targets.
@@ -166,6 +282,8 @@ impl Default for ConversionOptions {
         Self {
             quality: 80,
             max_dimensions: None,
+            resize: None,
+            compression: None,
             metadata: MetadataPolicy::default(),
             background: BackgroundPolicy::default(),
             on_collision: CollisionPolicy::default(),
@@ -177,6 +295,7 @@ impl ConversionOptions {
     /// Quality must be 1–100; RGBA→alpha-less-target is fine because
     /// `background` always supplies the flatten color (default white).
     /// Rejects quality 0 and >100 with [`ForgeError::InvalidConfiguration`].
+    /// Compression-embedded qualities (JPEG/WebP/PNG-level) are validated too.
     pub fn validated(self) -> Result<Self> {
         if self.quality == 0 || self.quality > 100 {
             return Err(ForgeError::InvalidConfiguration(format!(
@@ -184,11 +303,23 @@ impl ConversionOptions {
                 self.quality
             )));
         }
+        match self.compression {
+            Some(Compression::Jpeg { quality } | Compression::WebpLossy { quality })
+                if quality == 0 || quality > 100 =>
+            {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "compression quality must be 1-100, got {quality}"
+                )));
+            }
+            Some(Compression::Png { level }) if level > 9 => {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "PNG compression level must be 0-9, got {level}"
+                )));
+            }
+            _ => {}
+        }
         Ok(self)
     }
-
-    /// True when `target` cannot carry alpha (flattening required).
-    #[must_use]
     pub fn requires_flattening(target: ImageFormat) -> bool {
         !target.descriptor().supports_alpha
     }
@@ -263,5 +394,50 @@ mod tests {
             (255, 255, 255),
             "safe predictable default per Master Spec §10"
         );
+    }
+
+    #[test]
+    fn test_scaled_geometries() {
+        let src = ImageDimensions::new(1020, 900).unwrap();
+        // Fit 800×600: scale = min(800/1020, 600/900) = 2/3 → 680×600.
+        assert_eq!(
+            src.scaled_to_fit(ImageDimensions::new(800, 600).unwrap()),
+            ImageDimensions::new(680, 600).unwrap()
+        );
+        // Cover 800×600: scale = max(800/1020, 600/900) ≈ 0.784 → 800×706.
+        assert_eq!(
+            src.scaled_to_cover(ImageDimensions::new(800, 600).unwrap()),
+            ImageDimensions::new(800, 706).unwrap()
+        );
+        // Crop origin centers the 800×600 box in the 800×706 cover.
+        assert_eq!(
+            ImageDimensions::new(800, 706)
+                .unwrap()
+                .center_crop_origin(ImageDimensions::new(800, 600).unwrap()),
+            (0, 53)
+        );
+    }
+
+    #[test]
+    fn test_compression_bounds_validated() {
+        let ok = ConversionOptions {
+            compression: Some(Compression::Png { level: 9 }),
+            ..Default::default()
+        };
+        assert!(ok.validated().is_ok());
+        for bad in [
+            Compression::Png { level: 10 },
+            Compression::Jpeg { quality: 0 },
+            Compression::WebpLossy { quality: 101 },
+        ] {
+            let opts = ConversionOptions {
+                compression: Some(bad),
+                ..Default::default()
+            };
+            assert!(
+                matches!(opts.validated(), Err(ForgeError::InvalidConfiguration(_))),
+                "{bad:?}"
+            );
+        }
     }
 }

@@ -21,6 +21,15 @@ const infos = ref<FileInfo[]>([]);
 const target = ref("webp");
 const quality = ref(80);
 const stripMetadata = ref(true);
+const resizeMode = ref<"off" | "exact" | "fit" | "fill">("off");
+const exactW = ref<number | null>(800);
+const exactH = ref<number | null>(600);
+const fitBox = ref("800x600");
+const fillBox = ref("800x600");
+const filter = ref("lanczos3");
+const upscale = ref(false);
+const pngLevel = ref(6);
+const webpLossless = ref(false);
 const outputDir = ref<string | null>(null);
 const busy = ref(false);
 const progress = ref<string | null>(null);
@@ -114,6 +123,14 @@ async function convert() {
       to: target.value,
       outputDir: outputDir.value ?? undefined,
       quality: quality.value,
+      width: resizeMode.value === "exact" ? (exactW.value ?? undefined) : undefined,
+      height: resizeMode.value === "exact" ? (exactH.value ?? undefined) : undefined,
+      fit: resizeMode.value === "fit" ? fitBox.value : undefined,
+      fill: resizeMode.value === "fill" ? fillBox.value : undefined,
+      filter: filter.value,
+      upscale: resizeMode.value === "off" ? undefined : upscale.value,
+      pngLevel: target.value === "png" ? pngLevel.value : undefined,
+      webpLossless: target.value === "webp" ? webpLossless.value || undefined : undefined,
       stripMetadata: stripMetadata.value,
       onCollision: "rename",
     });
@@ -214,10 +231,57 @@ onMounted(() => void refresh());
         </label>
         <label class="field grow">
           <span>Quality · {{ quality }}</span>
-          <input v-model.number="quality" type="range" min="1" max="100" />
+          <input v-model.number="quality" type="range" min="1" max="100" :disabled="webpLossless" />
+        </label>
+        <label v-if="target === 'png'" class="field">
+          <span>PNG level · {{ pngLevel }}</span>
+          <input v-model.number="pngLevel" type="range" min="0" max="9" />
+        </label>
+        <label v-if="target === 'webp'" class="check">
+          <input v-model="webpLossless" type="checkbox" /> Lossless
         </label>
         <label class="check">
           <input v-model="stripMetadata" type="checkbox" /> Strip metadata
+        </label>
+      </div>
+
+      <div class="controls card">
+        <label class="field">
+          <span>Resize</span>
+          <select v-model="resizeMode">
+            <option value="off">Keep size</option>
+            <option value="exact">Exact W×H</option>
+            <option value="fit">Fit inside</option>
+            <option value="fill">Fill + crop</option>
+          </select>
+        </label>
+        <label v-if="resizeMode === 'exact'" class="field inline">
+          <span>Width × Height</span>
+          <span class="pair">
+            <input v-model.number="exactW" type="number" min="1" max="16384" />
+            <span>×</span>
+            <input v-model.number="exactH" type="number" min="1" max="16384" />
+          </span>
+        </label>
+        <label v-if="resizeMode === 'fit'" class="field">
+          <span>Fit box (W×H)</span>
+          <input v-model="fitBox" type="text" placeholder="800x600" pattern="\d+[xX]\d+" />
+        </label>
+        <label v-if="resizeMode === 'fill'" class="field">
+          <span>Fill box (W×H)</span>
+          <input v-model="fillBox" type="text" placeholder="800x600" pattern="\d+[xX]\d+" />
+        </label>
+        <label v-if="resizeMode !== 'off'" class="field">
+          <span>Filter</span>
+          <select v-model="filter">
+            <option value="lanczos3">Lanczos3</option>
+            <option value="catmullrom">CatmullRom</option>
+            <option value="gaussian">Gaussian</option>
+            <option value="nearest">Nearest</option>
+          </select>
+        </label>
+        <label v-if="resizeMode === 'fit' || resizeMode === 'fill'" class="check">
+          <input v-model="upscale" type="checkbox" /> Upscale
         </label>
       </div>
 
@@ -505,18 +569,28 @@ header h1 {
   align-items: center;
   flex-wrap: wrap;
 }
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
+.error {
+  color: var(--danger);
 }
-.field select,
-.field input[type="range"] {
-  accent-color: var(--brand);
+.result {
+  margin-top: 1rem;
 }
+.field input[type="text"],
+.field input[type="number"],
 .field select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  background: white;
+  font-size: 0.9rem;
+}
+.field input[type="number"] {
+  width: 5.5rem;
+}
+.pair {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0.45rem 0.6rem;

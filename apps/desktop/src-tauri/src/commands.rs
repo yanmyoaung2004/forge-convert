@@ -13,7 +13,7 @@ use forge_core::{
     Preset,
 };
 use forge_engine::{EngineDeps, NullSink, Orchestrator, StdFileSystem};
-use forge_image::{FitWithinStep, ForgeImageDecoder, ForgeImageEncoder};
+use forge_image::{ForgeImageDecoder, ForgeImageEncoder, ResizeStep};
 use forge_pdf::ForgePdfWriter;
 use serde::{Deserialize, Serialize};
 
@@ -164,6 +164,14 @@ pub(crate) struct ConvertArgs {
     quality: Option<u8>,
     max_width: Option<u32>,
     max_height: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+    fit: Option<String>,
+    fill: Option<String>,
+    filter: Option<String>,
+    upscale: Option<bool>,
+    png_level: Option<u8>,
+    webp_lossless: Option<bool>,
     strip_metadata: Option<bool>,
     on_collision: Option<String>,
 }
@@ -195,17 +203,117 @@ fn parse_collision(raw: Option<&str>) -> Result<forge_core::CollisionPolicy, Com
     }
 }
 
+fn parse_filter(raw: Option<&str>) -> Result<forge_core::ResizeFilter, CommandError> {
+    use forge_core::ResizeFilter;
+    match raw.unwrap_or("lanczos3").to_ascii_lowercase().as_str() {
+        "lanczos3" | "lanczos" => Ok(ResizeFilter::Lanczos3),
+        "catmullrom" | "catmull-rom" | "bicubic" => Ok(ResizeFilter::CatmullRom),
+        "gaussian" => Ok(ResizeFilter::Gaussian),
+        "nearest" => Ok(ResizeFilter::Nearest),
+        other => Err(ForgeError::InvalidConfiguration(format!("unknown filter {other:?}")).into()),
+    }
+}
+
+fn parse_box(raw: &str) -> Result<forge_core::ImageDimensions, CommandError> {
+    let (w, h) = raw.split_once(['x', 'X']).ok_or_else(|| {
+        CommandError::from(ForgeError::InvalidConfiguration(format!(
+            "expected WIDTHxHEIGHT, got {raw:?}"
+        )))
+    })?;
+    let width: u32 = w.trim().parse().map_err(|_| {
+        CommandError::from(ForgeError::InvalidConfiguration(format!(
+            "bad width in {raw:?}"
+        )))
+    })?;
+    let height: u32 = h.trim().parse().map_err(|_| {
+        CommandError::from(ForgeError::InvalidConfiguration(format!(
+            "bad height in {raw:?}"
+        )))
+    })?;
+    forge_core::ImageDimensions::new(width, height).map_err(CommandError::from)
+}
+
+fn parse_resize_args(
+    width: Option<u32>,
+    height: Option<u32>,
+    fit: Option<String>,
+    fill: Option<String>,
+    filter: Option<String>,
+    upscale: bool,
+) -> Result<Option<forge_core::ResizeSpec>, CommandError> {
+    use forge_core::ResizeSpec;
+    let filter = parse_filter(filter.as_deref())?;
+    if width.is_some() || height.is_some() {
+        let (Some(w), Some(h)) = (width, height) else {
+            return Err(ForgeError::InvalidConfiguration(
+                "width and height must be given together".to_string(),
+            )
+            .into());
+        };
+        return Ok(Some(ResizeSpec::Exact {
+            dimensions: forge_core::ImageDimensions::new(w, h).map_err(CommandError::from)?,
+            filter,
+        }));
+    }
+    if let Some(raw) = fill {
+        return Ok(Some(ResizeSpec::Fill {
+            bounds: parse_box(&raw)?,
+            filter,
+            upscale,
+        }));
+    }
+    if let Some(raw) = fit {
+        return Ok(Some(ResizeSpec::Fit {
+            bounds: parse_box(&raw)?,
+            filter,
+            upscale,
+        }));
+    }
+    Ok(None)
+}
+
+fn parse_compression_args(
+    target: ImageFormat,
+    quality: u8,
+    png_level: Option<u8>,
+    webp_lossless: bool,
+) -> Result<Option<forge_core::Compression>, CommandError> {
+    use forge_core::Compression;
+    if target == ImageFormat::Png {
+        if let Some(level) = png_level {
+            if level > 9 {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "PNG level must be 0-9, got {level}"
+                ))
+                .into());
+            }
+            return Ok(Some(Compression::Png { level }));
+        }
+        return Ok(None);
+    }
+    if target == ImageFormat::Webp && webp_lossless {
+        return Ok(Some(Compression::WebpLossless));
+    }
+    if target == ImageFormat::Jpeg {
+        return Ok(Some(Compression::Jpeg { quality }));
+    }
+    if target == ImageFormat::Webp {
+        return Ok(Some(Compression::WebpLossy { quality }));
+    }
+    Ok(None)
+}
+
 fn engine() -> (
     StdFileSystem,
     ForgeImageDecoder,
     ForgeImageEncoder,
-    FitWithinStep,
+    ResizeStep,
 ) {
     (
         StdFileSystem,
         ForgeImageDecoder,
         ForgeImageEncoder,
-        FitWithinStep,
+        ResizeStep,
     )
 }
 
@@ -226,9 +334,25 @@ pub fn convert_image(args: ConvertArgs) -> CommandResult<ConvertDone> {
                 .map_err(CommandError::from)?,
         ),
     };
+    let resize = parse_resize_args(
+        args.width,
+        args.height,
+        args.fit.clone(),
+        args.fill.clone(),
+        args.filter.clone(),
+        args.upscale.unwrap_or(false),
+    )?;
+    let compression = parse_compression_args(
+        target,
+        args.quality.unwrap_or(80),
+        args.png_level,
+        args.webp_lossless.unwrap_or(false),
+    )?;
     let options = ConversionOptions {
         quality: args.quality.unwrap_or(80),
         max_dimensions,
+        resize,
+        compression,
         metadata: if args.strip_metadata.unwrap_or(false) {
             MetadataPolicy::Remove
         } else {

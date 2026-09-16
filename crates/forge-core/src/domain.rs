@@ -18,8 +18,8 @@ pub use job::{
     ConversionJob, ConversionRequest, ConversionResult, JobId, JobProgress, JobStatus,
 };
 pub use options::{
-    BackgroundPolicy, CollisionPolicy, ConversionOptions, ImageDimensions, ImageMetadata,
-    MetadataPolicy, PageRange,
+    BackgroundPolicy, CollisionPolicy, Compression, ConversionOptions, ImageDimensions,
+    ImageMetadata, MetadataPolicy, PageRange, ResizeFilter, ResizeSpec,
 };
 pub use output::OutputTarget;
 pub use preset::Preset;
