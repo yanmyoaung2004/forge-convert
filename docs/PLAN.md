@@ -1,7 +1,8 @@
 # ForgeConvert — Implementation Plan (Phase 0 → 10)
 
-> Spec: `dev/product.md`. Architecture: clean layered + hexagonal
-> (ports & adapters). Status: toolchain ready (rustc 1.98.1 MSVC), research
+> Spec: `product.md`. Architecture: clean layered + hexagonal
+> (ports & adapters). Repo root is `dev/` — all paths in this plan are
+> relative to it. Status: toolchain ready (rustc 1.98.1 MSVC), research
 > done (`PROGRESS.md` → Research facts). This plan is the build order.
 > Owner goal: **working product at the end** — every phase ends in a
 > runnable, tested artefact, committed per task.
