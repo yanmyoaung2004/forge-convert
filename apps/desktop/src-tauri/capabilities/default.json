@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "ForgeConvert default capabilities: core + dialog file pickers.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}

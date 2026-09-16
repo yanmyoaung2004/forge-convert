@@ -1,0 +1,29 @@
+[package]
+name = "forgeconvert_desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "forgeconvert_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6" }
+
+[dependencies]
+forge-core = { path = "../../../crates/forge-core" }
+forge-engine = { path = "../../../crates/forge-engine" }
+forge-image = { path = "../../../crates/forge-image" }
+forge-pdf = { path = "../../../crates/forge-pdf" }
+forge-store = { path = "../../../crates/forge-store" }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { workspace = true, features = [] }
+tauri-plugin-dialog = { workspace = true }
+thiserror.workspace = true
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
