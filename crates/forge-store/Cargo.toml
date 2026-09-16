@@ -1,0 +1,11 @@
+[package]
+name = "forge-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+thiserror.workspace = true
+# Phase 9 adds: rusqlite 0.40 with `bundled`.

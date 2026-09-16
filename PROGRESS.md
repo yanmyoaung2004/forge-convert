@@ -19,7 +19,7 @@
 | 2 | 2026-09-17 | Toolchain | Repaired interrupted rustup update (`rustup update stable` → `rustc 1.98.1`, `cargo 1.98.1`, host `x86_64-pc-windows-msvc`). Verified MSVC 14.44 + WinSDK 10.0.26100.0 + WebView2 153 → Tauri 2 unblocked. | _see log_ |
 | 3 | 2026-09-17 | Stack research | 4 parallel scouts + direct index/raw verification (see Research facts below). Key: `image` WebP encode is lossless-only → need `webp` crate for lossy q80; `printpdf` for image→PDF; PDF render deferred; Tauri MSVC-gated but unblocked. | _see log_ |
 | 4 | 2026-09-17 | Detailed plan + dev/ move | `docs/PLAN.md` (Phase 0→10, hexagonal layout, dep-justification table). Rewrote `AGENTS.md` for new root. Moved repo root into `dev/` (`.git/` + all tracked files live under `dev/`; parent holds only `dev/`). | _see log_ |
-| 5 | — | Scaffold | Cargo workspace + hexagonal layers, ADRs `docs/adr/001–012`, CI, `tests/fixtures`. | — |
+| 5 | 2026-09-17 | Scaffold (Phase 0) | Workspace `Cargo.toml` (members `apps/cli`, `crates/*`), `rust-toolchain.toml`, 5 lib crates + CLI bin (compiling stubs), ADRs 001–012, `docs/architecture/layers.md`, `tests/fixtures/README.md`, CI (`fmt`+`clippy -D warnings`+`test`). Gates: `cargo build/test/clippy` green (0 tests, skeleton). Shell note: Git-Bash can't exec cargo shims; use PowerShell `& \"$env:USERPROFILE\\.cargo\\bin\\cargo.exe\"`. | _see log_ |
 | 6+ | — | Build phases | Phase 1 domain → Phase 2 PNG/JPEG/WebP → Phase 3 jobs → Phase 4 batch → Phase 5 PDF → Phase 6 Tauri UI → Phase 7 CLI → Phase 8 optimize → Phase 9 history → Phase 10 hardening. Each phase: code + tests + commit. | — |
 
 ## Environment facts (verified, not guessed)

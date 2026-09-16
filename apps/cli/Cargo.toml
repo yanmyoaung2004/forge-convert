@@ -1,0 +1,15 @@
+[package]
+name = "forgeconvert"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "forgeconvert"
+path = "src/main.rs"
+
+[dependencies]
+forge-core = { path = "../../crates/forge-core" }
+forge-engine = { path = "../../crates/forge-engine" }
+# Phase 7 adds: clap 4.6 with `derive`.

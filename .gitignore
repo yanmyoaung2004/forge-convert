@@ -1,8 +1,8 @@
-# Rust / Node / Tauri / IDE — ForgeConvert
-/target/
+# Rust / Node / Tauri / IDE — ForgeConvert (repo root: dev/)
+target/
+**/target/
 **/*.rs.bk
-Cargo.lock
-# (keep Cargo.lock for binaries/apps; harmless for libs)
+# Keep Cargo.lock: workspace ships binaries (CLI + desktop).
 
 # Node / frontend
 node_modules/
