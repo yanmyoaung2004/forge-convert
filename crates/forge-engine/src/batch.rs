@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
 };
 
 use forge_core::{
@@ -72,7 +72,6 @@ impl CancelToken for CancelFlag {
     }
 }
 
-
 /// One file's work unit (must be `Send + 'static` for `spawn_blocking`).
 pub trait BatchTask: Fn(PathBuf) -> Result<Option<PathBuf>> + Send + Sync + 'static {}
 impl<F> BatchTask for F where F: Fn(PathBuf) -> Result<Option<PathBuf>> + Send + Sync + 'static {}
@@ -128,10 +127,7 @@ where
             let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
             sink.progress(
                 &job_id,
-                &JobProgress::new(
-                    done as f32 / total as f32,
-                    Some(format!("{done}/{total}")),
-                ),
+                &JobProgress::new(done as f32 / total as f32, Some(format!("{done}/{total}"))),
             );
             (input, outcome)
         }));
@@ -253,7 +249,9 @@ mod tests {
         let live = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
         let job_id = JobId::generate();
-        let inputs: Vec<PathBuf> = (0..20).map(|i| PathBuf::from(format!("f{i}.png"))).collect();
+        let inputs: Vec<PathBuf> = (0..20)
+            .map(|i| PathBuf::from(format!("f{i}.png")))
+            .collect();
         let live_task = live.clone();
         let peak_task = peak.clone();
         run_batch(

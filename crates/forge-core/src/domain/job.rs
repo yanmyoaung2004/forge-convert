@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::domain::format::{ImageFormat, detect_format};
+use crate::domain::format::{detect_format, ImageFormat};
 use crate::domain::options::ConversionOptions;
 use crate::domain::output::OutputTarget;
 use crate::error::{ForgeError, Result};
@@ -56,10 +56,7 @@ impl JobStatus {
     /// Terminal states accept no further transitions.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed | Self::Failed | Self::Cancelled
-        )
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 
     /// Validate `from → to`; returns `to` or [`ForgeError::InvalidTransition`].
@@ -177,6 +174,8 @@ pub struct ConversionResult {
     pub outputs: Vec<PathBuf>,
     /// Per-input failures (batch keeps going; never "something went wrong").
     pub failures: Vec<String>,
+    /// Inputs skipped by collision policy (Skip) — not failures.
+    pub skipped: Vec<PathBuf>,
     /// Total wall time.
     pub duration: std::time::Duration,
 }
@@ -201,11 +200,7 @@ pub fn default_output_extension(format: ImageFormat) -> &'static str {
 /// Default output path: input dir (or `output_dir` when given),
 /// same basename + new extension (spec §15: `logo.png → logo.webp`).
 #[must_use]
-pub fn output_path_for(
-    input: &Path,
-    format: ImageFormat,
-    output_dir: Option<&Path>,
-) -> PathBuf {
+pub fn output_path_for(input: &Path, format: ImageFormat, output_dir: Option<&Path>) -> PathBuf {
     let stem = canonical_stem_of(input);
     let file = format!("{stem}.{ext}", ext = default_output_extension(format));
     match output_dir {
@@ -226,10 +221,7 @@ pub fn detect_input_format(path: &Path, bytes: Option<&[u8]>) -> Result<ImageFor
         .and_then(|e| e.to_str())
         .and_then(ImageFormat::from_extension)
         .ok_or_else(|| {
-            ForgeError::UnsupportedFormat(format!(
-                "cannot determine format of {}",
-                path.display()
-            ))
+            ForgeError::UnsupportedFormat(format!("cannot determine format of {}", path.display()))
         })
 }
 

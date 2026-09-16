@@ -55,7 +55,10 @@ pub enum ForgeError {
     ResourceLimitExceeded(String),
 
     #[error("invalid job transition from {from} to {to}")]
-    InvalidTransition { from: &'static str, to: &'static str },
+    InvalidTransition {
+        from: &'static str,
+        to: &'static str,
+    },
 
     #[error("unsupported capability {capability}: {hint}")]
     Unsupported {

@@ -11,11 +11,11 @@ pub mod preset;
 
 pub use canonical::CanonicalImage;
 pub use format::{
-    ColorSpace, FormatCapabilities, FormatDescriptor, ImageFormat, PixelFormat, detect_format,
+    detect_format, ColorSpace, FormatCapabilities, FormatDescriptor, ImageFormat, PixelFormat,
 };
 pub use job::{
-    ConversionJob, ConversionRequest, ConversionResult, JobId, JobProgress, JobStatus,
     canonical_stem_of, default_output_extension, detect_input_format, output_path_for,
+    ConversionJob, ConversionRequest, ConversionResult, JobId, JobProgress, JobStatus,
 };
 pub use options::{
     BackgroundPolicy, CollisionPolicy, ConversionOptions, ImageDimensions, ImageMetadata,

@@ -188,10 +188,7 @@ impl FormatCapabilities {
     /// Descriptors for every known format.
     #[must_use]
     pub fn all_descriptors() -> Vec<FormatDescriptor> {
-        ImageFormat::all()
-            .iter()
-            .map(|f| f.descriptor())
-            .collect()
+        ImageFormat::all().iter().map(|f| f.descriptor()).collect()
     }
 }
 
@@ -290,14 +287,8 @@ mod tests {
             let back = ImageFormat::from_extension(ext);
             assert_eq!(back, Some(*f), "extension {ext}");
         }
-        assert_eq!(
-            ImageFormat::from_extension("JPG"),
-            Some(ImageFormat::Jpeg)
-        );
-        assert_eq!(
-            ImageFormat::from_extension(".tif"),
-            Some(ImageFormat::Tiff)
-        );
+        assert_eq!(ImageFormat::from_extension("JPG"), Some(ImageFormat::Jpeg));
+        assert_eq!(ImageFormat::from_extension(".tif"), Some(ImageFormat::Tiff));
         assert_eq!(ImageFormat::from_extension("xyz"), None);
     }
 
@@ -358,10 +349,7 @@ mod tests {
         }
         // Images can target PDF; PDF targets images only.
         assert!(FormatCapabilities::targets_for(ImageFormat::Png).contains(&ImageFormat::Pdf));
-        assert!(
-            !FormatCapabilities::targets_for(ImageFormat::Pdf)
-                .contains(&ImageFormat::Pdf)
-        );
+        assert!(!FormatCapabilities::targets_for(ImageFormat::Pdf).contains(&ImageFormat::Pdf));
     }
 
     #[test]

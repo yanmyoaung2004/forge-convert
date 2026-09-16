@@ -9,7 +9,7 @@ mod filesystem;
 mod naming;
 mod orchestrator;
 
-pub use batch::{BatchConfig, BatchReport, CancelFlag, NullSink, run_batch, split_request};
+pub use batch::{run_batch, split_request, BatchConfig, BatchReport, CancelFlag, NullSink};
 pub use filesystem::StdFileSystem;
 pub use naming::resolve_output;
 pub use orchestrator::{EngineDeps, Orchestrator};

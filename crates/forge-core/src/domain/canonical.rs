@@ -25,9 +25,7 @@ impl CanonicalImage {
     /// Expected buffer length for the geometry.
     #[must_use]
     pub fn expected_len(dimensions: ImageDimensions, pixel_format: PixelFormat) -> usize {
-        dimensions.width as usize
-            * dimensions.height as usize
-            * pixel_format.bytes_per_pixel()
+        dimensions.width as usize * dimensions.height as usize * pixel_format.bytes_per_pixel()
     }
 }
 

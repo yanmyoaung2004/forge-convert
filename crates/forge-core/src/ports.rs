@@ -114,12 +114,7 @@ impl Default for PdfWriteSpec {
 /// behind cargo features later.
 pub trait PdfRenderer: Send + Sync {
     /// Render 1-based `pages` at `dpi` into canonical images.
-    fn render(
-        &self,
-        pdf_bytes: &[u8],
-        pages: &[u32],
-        dpi: u16,
-    ) -> Result<Vec<CanonicalImage>>;
+    fn render(&self, pdf_bytes: &[u8], pages: &[u32], dpi: u16) -> Result<Vec<CanonicalImage>>;
 }
 
 /// Persist + query job records (engine-tested via in-memory fake;

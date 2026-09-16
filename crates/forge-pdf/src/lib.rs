@@ -46,12 +46,7 @@ impl PdfWriter for ForgePdfWriter {
 pub struct StubPdfRenderer;
 
 impl PdfRenderer for StubPdfRenderer {
-    fn render(
-        &self,
-        _pdf_bytes: &[u8],
-        _pages: &[u32],
-        _dpi: u16,
-    ) -> Result<Vec<CanonicalImage>> {
+    fn render(&self, _pdf_bytes: &[u8], _pages: &[u32], _dpi: u16) -> Result<Vec<CanonicalImage>> {
         Err(ForgeError::Unsupported {
             capability: "pdf-to-image",
             hint: "no renderer qualified yet (see ADR 009): rebuild with a render backend",
@@ -92,8 +87,14 @@ fn oriented_page(spec: &PdfWriteSpec) -> (printpdf::Mm, printpdf::Mm) {
         height_mm,
     } = spec.page;
     match spec.orientation {
-        Orientation::Portrait => (printpdf::Mm(width_mm as f32), printpdf::Mm(height_mm as f32)),
-        Orientation::Landscape => (printpdf::Mm(height_mm as f32), printpdf::Mm(width_mm as f32)),
+        Orientation::Portrait => (
+            printpdf::Mm(width_mm as f32),
+            printpdf::Mm(height_mm as f32),
+        ),
+        Orientation::Landscape => (
+            printpdf::Mm(height_mm as f32),
+            printpdf::Mm(width_mm as f32),
+        ),
     }
 }
 
@@ -237,17 +238,18 @@ mod tests {
     fn test_write_rejects_empty_and_bad_spec() {
         let writer = ForgePdfWriter;
         assert!(writer.write_images(&[], &PdfWriteSpec::default()).is_err());
-        let bad = PdfWriteSpec { dpi: 0.0, ..Default::default() };
+        let bad = PdfWriteSpec {
+            dpi: 0.0,
+            ..Default::default()
+        };
         assert!(writer.write_images(&[rgba_image(2, 2)], &bad).is_err());
         let bad_margins = PdfWriteSpec {
             margins_mm: 200.0,
             ..Default::default()
         };
-        assert!(
-            writer
-                .write_images(&[rgba_image(2, 2)], &bad_margins)
-                .is_err()
-        );
+        assert!(writer
+            .write_images(&[rgba_image(2, 2)], &bad_margins)
+            .is_err());
     }
 
     #[test]

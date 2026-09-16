@@ -38,6 +38,7 @@ impl<'a> Orchestrator<'a> {
 
     /// Run every input in `request` sequentially (batch parallelism
     /// lives in `batch.rs`; this stays single-file and cancellable).
+    /// Skips (collision policy) land in `result.skipped`, never failures.
     pub fn run(
         &self,
         request: ConversionRequest,
@@ -55,6 +56,7 @@ impl<'a> Orchestrator<'a> {
 
         let mut outputs = Vec::new();
         let mut failures = Vec::new();
+        let mut skipped = Vec::new();
         let total = request.inputs.len();
 
         for (index, input) in request.inputs.iter().enumerate() {
@@ -62,13 +64,11 @@ impl<'a> Orchestrator<'a> {
             let fraction = index as f32 / total.max(1) as f32;
             sink.progress(
                 &job.id,
-                &JobProgress::new(
-                    fraction,
-                    Some(format!("converting {}", input.display())),
-                ),
+                &JobProgress::new(fraction, Some(format!("converting {}", input.display()))),
             );
             match self.convert_one(&request, input, &request.options, cancel) {
-                Ok(path) => outputs.push(path),
+                Ok(SingleOutcome::Written(path)) => outputs.push(path),
+                Ok(SingleOutcome::Skipped(path)) => skipped.push(path),
                 Err(ForgeError::Cancelled) => {
                     job.advance(JobStatus::Cancelled)?;
                     sink.failed(&job.id, &ForgeError::Cancelled);
@@ -82,6 +82,7 @@ impl<'a> Orchestrator<'a> {
         let result = ConversionResult {
             outputs,
             failures,
+            skipped,
             duration: started.elapsed(),
         };
         job.advance(JobStatus::Completed)?;
@@ -91,14 +92,14 @@ impl<'a> Orchestrator<'a> {
         Ok(result)
     }
 
-    /// The §11 pipeline for one file.
+    /// The §11 pipeline for one file. `Skipped` out: collision policy said Skip.
     fn convert_one(
         &self,
         request: &ConversionRequest,
         input: &std::path::Path,
         options: &ConversionOptions,
         cancel: &dyn CancelToken,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<SingleOutcome> {
         cancel.check()?;
         // `StdFileSystem::read` already returns structured variants
         // (NotFound → InvalidFile, denied → PermissionDenied, …).
@@ -129,24 +130,30 @@ impl<'a> Orchestrator<'a> {
             .encode(&image, request.output_format, options)?;
 
         cancel.check()?;
-        let output_path = match &request.output {
-            OutputTarget::File(path) => path.clone(),
-            OutputTarget::Directory(dir) => {
-                resolve_output(input, request.output_format, Some(dir), options.on_collision)?
-            }
-        };
-        // Explicit-file outputs still respect Fail/Skip (never silently clobber
-        // unless Replace was chosen).
+        // Both output kinds funnel through skip-aware resolution:
+        // Skip → record, never write; Fail → OutputExists error.
         let output_path = match &request.output {
             OutputTarget::File(path) => {
-                crate::naming::apply_collision(path, options.on_collision)?
-                    .unwrap_or_else(|| path.clone())
+                match crate::naming::apply_collision(path, options.on_collision)? {
+                    Some(path) => path,
+                    None => return Ok(SingleOutcome::Skipped(input.to_path_buf())),
+                }
             }
-            OutputTarget::Directory(_) => output_path,
+            OutputTarget::Directory(dir) => {
+                match resolve_output(
+                    input,
+                    request.output_format,
+                    Some(dir),
+                    options.on_collision,
+                )? {
+                    Some(path) => path,
+                    None => return Ok(SingleOutcome::Skipped(input.to_path_buf())),
+                }
+            }
         };
 
         self.deps.fs.write_atomic(&output_path, &encoded)?;
-        Ok(output_path)
+        Ok(SingleOutcome::Written(output_path))
     }
 
     /// How long the last `run` phase took (helper for history, Phase 9).
@@ -154,6 +161,13 @@ impl<'a> Orchestrator<'a> {
     pub fn elapsed_since(start: Instant) -> Duration {
         start.elapsed()
     }
+}
+
+/// One file's outcome: written output or policy skip.
+#[derive(Debug)]
+enum SingleOutcome {
+    Written(std::path::PathBuf),
+    Skipped(std::path::PathBuf),
 }
 
 #[cfg(test)]
@@ -179,7 +193,9 @@ mod tests {
                 dimensions: ImageDimensions::new(2, 2).unwrap(),
                 pixel_format: forge_core::PixelFormat::Rgba8,
                 color_space: forge_core::ColorSpace::Srgb,
-                pixels: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 200],
+                pixels: vec![
+                    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 200,
+                ],
                 has_alpha: true,
             })
         }
@@ -221,7 +237,10 @@ mod tests {
                 .push(format!("progress:{:.2}", progress.fraction));
         }
         fn finished(&self, _id: &forge_core::JobId, _result: &ConversionResult) {
-            self.events.lock().expect("lock").push("finished".to_string());
+            self.events
+                .lock()
+                .expect("lock")
+                .push("finished".to_string());
         }
         fn failed(&self, _id: &forge_core::JobId, _error: &ForgeError) {
             self.events.lock().expect("lock").push("failed".to_string());
@@ -305,11 +324,14 @@ mod tests {
         let scratch = Scratch::new("orchestrator-same");
         let (mut request, _) = test_request(&scratch.dir, "logo.webp");
         request.output_format = forge_core::ImageFormat::Png; // decoded hint is PNG bytes…
-        // …but force the sniff to see PNG while target is PNG:
+                                                              // …but force the sniff to see PNG while target is PNG:
         request.output_format = forge_core::ImageFormat::Png;
         // Rewrite input with PNG magic so detect → Png == target Png.
-        std::fs::write(&request.inputs[0], [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-            .expect("input");
+        std::fs::write(
+            &request.inputs[0],
+            [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        )
+        .expect("input");
         let decoder = TestDecoder;
         let encoder = TestEncoder {
             calls: Mutex::new(Vec::new()),
@@ -383,5 +405,35 @@ mod tests {
         let result = engine.run(request, &sink, &NeverCancel).unwrap();
         assert!(result.outputs.is_empty());
         assert_eq!(result.failures.len(), 1);
+    }
+
+    #[test]
+    fn test_skip_policy_records_skip_not_failure() {
+        let scratch = Scratch::new("orchestrator-skip");
+        let (mut request, input) = test_request(&scratch.dir, "logo.png");
+        // Pre-create the output so Skip triggers.
+        let existing = scratch.dir.join("logo.webp");
+        std::fs::write(&existing, b"taken").expect("seed");
+        request.options.on_collision = CollisionPolicy::Skip;
+        let decoder = TestDecoder;
+        let encoder = TestEncoder {
+            calls: Mutex::new(Vec::new()),
+        };
+        let fs = StdFileSystem;
+        let engine = Orchestrator::new(EngineDeps {
+            decoder: &decoder,
+            encoder: &encoder,
+            transforms: &[],
+            fs: &fs,
+        });
+        let sink = TestSink {
+            events: Mutex::new(Vec::new()),
+        };
+        let result = engine.run(request, &sink, &NeverCancel).unwrap();
+        assert!(result.outputs.is_empty());
+        assert!(result.failures.is_empty(), "skip is not a failure");
+        assert_eq!(result.skipped, vec![input]);
+        // Seeded file untouched.
+        assert_eq!(std::fs::read(&existing).unwrap(), b"taken");
     }
 }

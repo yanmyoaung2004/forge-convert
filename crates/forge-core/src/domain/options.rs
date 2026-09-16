@@ -25,7 +25,9 @@ pub struct BackgroundPolicy {
 impl Default for BackgroundPolicy {
     /// Safe, predictable default: white.
     fn default() -> Self {
-        Self { rgb: (255, 255, 255) }
+        Self {
+            rgb: (255, 255, 255),
+        }
     }
 }
 
@@ -204,10 +206,7 @@ mod tests {
                 ..Default::default()
             };
             assert!(
-                matches!(
-                    opts.validated(),
-                    Err(ForgeError::InvalidConfiguration(_))
-                ),
+                matches!(opts.validated(), Err(ForgeError::InvalidConfiguration(_))),
                 "quality {bad}"
             );
         }
@@ -238,10 +237,7 @@ mod tests {
     fn test_page_range_parse() {
         assert_eq!(PageRange::parse("3").unwrap().pages, vec![3]);
         assert_eq!(PageRange::parse("1-3").unwrap().pages, vec![1, 2, 3]);
-        assert_eq!(
-            PageRange::parse("1,3,5-6").unwrap().pages,
-            vec![1, 3, 5, 6]
-        );
+        assert_eq!(PageRange::parse("1,3,5-6").unwrap().pages, vec![1, 3, 5, 6]);
         assert_eq!(
             PageRange::parse("3,1-2").unwrap().pages,
             vec![1, 2, 3],

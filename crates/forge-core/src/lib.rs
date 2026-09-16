@@ -10,11 +10,11 @@ pub mod domain;
 pub mod error;
 pub mod ports;
 pub use domain::{
-    BackgroundPolicy, CanonicalImage, CollisionPolicy, ConversionJob, ConversionOptions,
-    ConversionRequest, ConversionResult, FormatCapabilities, FormatDescriptor, ImageDimensions,
-    ImageFormat, ImageMetadata, JobId, JobProgress, JobStatus, MetadataPolicy, OutputTarget,
-    PageRange, Preset, canonical_stem_of, default_output_extension, detect_format,
-    detect_input_format, output_path_for,
+    canonical_stem_of, default_output_extension, detect_format, detect_input_format,
+    output_path_for, BackgroundPolicy, CanonicalImage, CollisionPolicy, ConversionJob,
+    ConversionOptions, ConversionRequest, ConversionResult, FormatCapabilities, FormatDescriptor,
+    ImageDimensions, ImageFormat, ImageMetadata, JobId, JobProgress, JobStatus, MetadataPolicy,
+    OutputTarget, PageRange, Preset,
 };
 pub use domain::{ColorSpace, PixelFormat};
 pub use error::{ForgeError, Result};

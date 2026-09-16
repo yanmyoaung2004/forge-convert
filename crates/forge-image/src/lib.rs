@@ -120,11 +120,7 @@ impl TransformStep for FitWithinStep {
         "fit-within"
     }
 
-    fn apply(
-        &self,
-        image: CanonicalImage,
-        options: &ConversionOptions,
-    ) -> Result<CanonicalImage> {
+    fn apply(&self, image: CanonicalImage, options: &ConversionOptions) -> Result<CanonicalImage> {
         let Some(max) = options.max_dimensions else {
             return Ok(image);
         };
@@ -152,20 +148,12 @@ fn to_image_format(format: ImageFormat) -> Option<image::ImageFormat> {
 fn canonicalize(img: &image::DynamicImage) -> CanonicalImage {
     use image::DynamicImage;
     let (pixels, pixel_format, has_alpha) = match img {
-        DynamicImage::ImageRgba8(buf) => (
-            buf.as_raw().clone(),
-            PixelFormat::Rgba8,
-            true,
-        ),
+        DynamicImage::ImageRgba8(buf) => (buf.as_raw().clone(), PixelFormat::Rgba8, true),
         DynamicImage::ImageRgb8(buf) => (buf.as_raw().clone(), PixelFormat::Rgb8, false),
         DynamicImage::ImageLuma8(buf) => (buf.as_raw().clone(), PixelFormat::Luma8, false),
         DynamicImage::ImageLumaA8(buf) => (buf.as_raw().clone(), PixelFormat::La8, true),
         // Normalize wide/float buffers through 8-bit RGBA (MVP scope).
-        other => (
-            other.to_rgba8().into_raw(),
-            PixelFormat::Rgba8,
-            true,
-        ),
+        other => (other.to_rgba8().into_raw(), PixelFormat::Rgba8, true),
     };
     let dimensions = ImageDimensions::new(img.width(), img.height())
         .expect("decoded image has non-zero dimensions");
@@ -180,7 +168,7 @@ fn canonicalize(img: &image::DynamicImage) -> CanonicalImage {
 
 /// Canonical → `DynamicImage` for `image`-crate encoders/ops.
 fn to_dynamic(image: &CanonicalImage) -> Result<image::DynamicImage> {
-    use image::{RgbaImage, RgbImage};
+    use image::{RgbImage, RgbaImage};
     let expected = CanonicalImage::expected_len(image.dimensions, image.pixel_format);
     if image.pixels.len() != expected {
         return Err(ForgeError::InvalidFile(format!(
@@ -221,8 +209,7 @@ fn to_dynamic(image: &CanonicalImage) -> Result<image::DynamicImage> {
 
 /// True when the target drops alpha and the image carries it.
 fn options_flatten_needed(image: &CanonicalImage, target: ImageFormat) -> bool {
-    !target.descriptor().supports_alpha
-        && (image.pixel_format.has_alpha() || image.has_alpha)
+    !target.descriptor().supports_alpha && (image.pixel_format.has_alpha() || image.has_alpha)
 }
 
 /// Alpha-composite over `background` → opaque RGB8.
@@ -289,7 +276,12 @@ fn encode_png(image: &CanonicalImage) -> Result<Vec<u8>> {
         let encoder =
             PngEncoder::new_with_quality(&mut out, CompressionType::Default, FilterType::Adaptive);
         encoder
-            .write_image(bytes, image.dimensions.width, image.dimensions.height, color)
+            .write_image(
+                bytes,
+                image.dimensions.width,
+                image.dimensions.height,
+                color,
+            )
             .map_err(|e| ForgeError::EncodeFailed(e.to_string()))?;
     }
     Ok(out)
@@ -324,9 +316,8 @@ fn encode_webp_lossy(image: &CanonicalImage, quality: u8) -> Result<Vec<u8>> {
 fn encode_via_image(image: &CanonicalImage, target: ImageFormat) -> Result<Vec<u8>> {
     let dyn_image = to_dynamic(image)?;
     let mut out = Vec::new();
-    let format = to_image_format(target).ok_or_else(|| {
-        ForgeError::UnsupportedFormat(format!("no image mapping for {target:?}"))
-    })?;
+    let format = to_image_format(target)
+        .ok_or_else(|| ForgeError::UnsupportedFormat(format!("no image mapping for {target:?}")))?;
     dyn_image
         .write_to(&mut std::io::Cursor::new(&mut out), format)
         .map_err(|e| ForgeError::EncodeFailed(e.to_string()))?;
@@ -364,9 +355,7 @@ mod tests {
             ..Default::default()
         };
         let bytes = encoder.encode(&rgba_fixture(), target, &opts).unwrap();
-        let back = decoder
-            .decode(&bytes, Some(target))
-            .expect("must redecode");
+        let back = decoder.decode(&bytes, Some(target)).expect("must redecode");
         assert_eq!(back.dimensions, rgba_fixture().dimensions);
         if target.descriptor().supports_alpha {
             assert!(back.has_alpha || back.pixel_format.has_alpha());
@@ -382,11 +371,17 @@ mod tests {
     fn test_jpeg_roundtrip_flattens_alpha() {
         let encoder = ForgeImageEncoder;
         let bytes = encoder
-            .encode(&rgba_fixture(), ImageFormat::Jpeg, &ConversionOptions::default())
+            .encode(
+                &rgba_fixture(),
+                ImageFormat::Jpeg,
+                &ConversionOptions::default(),
+            )
             .unwrap();
         // JPEG magic: FF D8 FF.
         assert_eq!(&bytes[0..3], &[0xFF, 0xD8, 0xFF]);
-        let back = ForgeImageDecoder.decode(&bytes, Some(ImageFormat::Jpeg)).unwrap();
+        let back = ForgeImageDecoder
+            .decode(&bytes, Some(ImageFormat::Jpeg))
+            .unwrap();
         assert!(!back.pixel_format.has_alpha());
     }
 

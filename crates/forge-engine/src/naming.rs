@@ -6,26 +6,24 @@
 
 use std::path::{Path, PathBuf};
 
-use forge_core::{CollisionPolicy, ImageFormat, Result, canonical_stem_of, ForgeError};
+use forge_core::{canonical_stem_of, CollisionPolicy, ForgeError, ImageFormat, Result};
 
 /// Resolve `input` → output path under `output_dir` (or beside input).
-/// Applies `policy` for existing paths.
+/// Applies `policy` for existing paths. Returns `Ok(None)` when the
+/// policy is Skip and the candidate exists (caller records a skip).
 pub fn resolve_output(
     input: &Path,
     format: ImageFormat,
     output_dir: Option<&Path>,
     policy: CollisionPolicy,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
     let stem = canonical_stem_of(input);
     let file = format!("{stem}.{ext}", ext = format.extension());
     let base = match output_dir {
         Some(dir) => dir.join(file),
         None => input.with_file_name(file),
     };
-    match apply_collision(&base, policy)? {
-        Some(path) => Ok(path),
-        None => Ok(base), // Skip: caller treats existing path as skipped
-    }
+    apply_collision(&base, policy)
 }
 
 /// Apply `policy` to `candidate`. Returns `None` for Skip-when-exists
@@ -108,7 +106,7 @@ mod tests {
             CollisionPolicy::Replace,
         )
         .unwrap();
-        assert_eq!(path, PathBuf::from("/img/logo.webp"));
+        assert_eq!(path, Some(PathBuf::from("/img/logo.webp")));
     }
 
     #[test]
@@ -123,9 +121,8 @@ mod tests {
             CollisionPolicy::RenameAuto,
         )
         .unwrap();
-        assert_eq!(second, scratch.dir.join("logo (1).webp"));
+        assert_eq!(second, Some(scratch.dir.join("logo (1).webp")));
     }
-
     #[test]
     fn test_fail_and_skip_policies() {
         let scratch = Scratch::new("fail-skip");
@@ -141,7 +138,18 @@ mod tests {
         );
         assert_eq!(
             apply_collision(&existing, CollisionPolicy::Replace).unwrap(),
-            Some(existing)
+            Some(existing.clone())
+        );
+        // resolve_output propagates Skip as None.
+        assert_eq!(
+            resolve_output(
+                Path::new("/img/a.png"),
+                ImageFormat::Webp,
+                Some(&scratch.dir),
+                CollisionPolicy::Skip
+            )
+            .unwrap(),
+            None
         );
     }
 }

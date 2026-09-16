@@ -30,10 +30,7 @@ mod tests {
     #[test]
     fn test_output_target_resolve() {
         let dir = OutputTarget::Directory(PathBuf::from("/out"));
-        assert_eq!(
-            dir.resolve("logo", "webp"),
-            PathBuf::from("/out/logo.webp")
-        );
+        assert_eq!(dir.resolve("logo", "webp"), PathBuf::from("/out/logo.webp"));
         let file = OutputTarget::File(PathBuf::from("/out/custom.png"));
         assert_eq!(
             file.resolve("logo", "webp"),
