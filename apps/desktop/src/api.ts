@@ -2,7 +2,7 @@
 // Backend is authoritative for capabilities, validation, and conversion.
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 export interface FormatInfo {
   id: string;
   name: string;
@@ -83,6 +83,10 @@ export async function pickDirectory(): Promise<string | null> {
   return selected;
 }
 
+/** Reveal a converted file in the OS file explorer (selects it). */
+export async function revealInFolder(path: string): Promise<void> {
+  await revealItemInDir(path);
+}
 export const api = {
   formats: () => invoke<FormatInfo[]>("get_format_capabilities"),
   fileInfo: (path: string) => invoke<FileInfo>("get_file_info", { path }),

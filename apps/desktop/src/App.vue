@@ -5,6 +5,7 @@ import {
   isCommandError,
   pickDirectory,
   pickFiles,
+  revealInFolder,
   type ConvertDone,
   type FileInfo,
   type FormatInfo,
@@ -22,20 +23,42 @@ const quality = ref(80);
 const stripMetadata = ref(true);
 const outputDir = ref<string | null>(null);
 const busy = ref(false);
+const progress = ref<string | null>(null);
 const result = ref<ConvertDone | null>(null);
 const error = ref<string | null>(null);
+const backendError = ref<string | null>(null);
 const history = ref<HistoryRow[]>([]);
 const tab = ref<"convert" | "history">("convert");
+const revealFailed = ref<string | null>(null);
 
 const encodable = computed(() => formats.value.filter((f) => f.can_encode));
+const backendReady = computed(() => formats.value.length > 0);
 const canConvert = computed(
-  () => !busy.value && files.value.length > 0 && target.value.length > 0,
+  () => backendReady.value && !busy.value && files.value.length > 0 && target.value.length > 0,
 );
 
+function fileName(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
+
+function parentDir(path: string): string {
+  const parts = path.split(/[/\\]/);
+  parts.pop();
+  return parts.join("/") || path;
+}
+
 async function refresh() {
-  formats.value = await api.formats();
-  presets.value = await api.presets();
-  history.value = await api.history(20);
+  backendError.value = null;
+  try {
+    formats.value = await api.formats();
+    presets.value = await api.presets();
+    history.value = await api.history(20);
+  } catch (err) {
+    backendError.value = isCommandError(err)
+      ? `${err.kind}: ${err.message}`
+      : "Backend unreachable — is the Tauri shell running? (pnpm tauri dev)";
+    return;
+  }
   if (!encodable.value.some((f) => f.id === target.value)) {
     target.value = encodable.value[0]?.id ?? "webp";
   }
@@ -55,9 +78,9 @@ async function inspectAll() {
   for (const path of files.value) {
     try {
       infos.value.push(await api.fileInfo(path));
-    } catch (err) {
+    } catch {
       infos.value.push({
-        name: path.split(/[/\\]/).pop() ?? path,
+        name: fileName(path),
         format: "Unknown",
         mime_type: "",
         width: null,
@@ -66,7 +89,6 @@ async function inspectAll() {
         alpha: false,
         size_bytes: 0,
       });
-      void err;
     }
   }
 }
@@ -85,6 +107,7 @@ async function convert() {
   busy.value = true;
   error.value = null;
   result.value = null;
+  progress.value = `Converting ${files.value.length} file${files.value.length === 1 ? "" : "s"}…`;
   try {
     result.value = await api.convert({
       inputs: files.value,
@@ -101,6 +124,16 @@ async function convert() {
       : String(err);
   } finally {
     busy.value = false;
+    progress.value = null;
+  }
+}
+
+async function reveal(path: string) {
+  revealFailed.value = null;
+  try {
+    await revealInFolder(path);
+  } catch {
+    revealFailed.value = `Could not open folder for ${fileName(path)}`;
   }
 }
 
@@ -116,46 +149,71 @@ onMounted(() => void refresh());
 
 <template>
   <main class="app">
-    <header>
-      <h1>ForgeConvert</h1>
-      <p class="sub">Local-first image &amp; PDF conversion. Files never leave your machine.</p>
-      <nav>
-        <button :class="{ active: tab === 'convert' }" @click="tab = 'convert'">Convert</button>
-        <button :class="{ active: tab === 'history' }" @click="tab = 'history'">History</button>
+    <header class="hero">
+      <div class="brand">
+        <div class="logo">Fc</div>
+        <div>
+          <h1>ForgeConvert</h1>
+          <p class="sub">Local-first image &amp; PDF conversion. Files never leave your machine.</p>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button :class="{ active: tab === 'convert' }" role="tab" @click="tab = 'convert'">Convert</button>
+        <button :class="{ active: tab === 'history' }" role="tab" @click="tab = 'history'">History</button>
       </nav>
     </header>
 
-    <section v-if="tab === 'convert'">
-      <div class="row">
-        <button @click="addFiles">Choose files</button>
-        <button :disabled="files.length === 0" @click="files = []">Clear</button>
-        <button @click="chooseOutputDir">
-          {{ outputDir ? `Output: ${outputDir}` : "Output folder (optional)" }}
+    <section v-if="backendError" class="panel banner" role="alert">
+      <strong>Backend unreachable.</strong>
+      <span>{{ backendError }}</span>
+      <span class="dim">Run the desktop shell (<code>pnpm tauri dev</code>), not plain <code>vite dev</code> — conversion commands live in Rust.</span>
+      <button class="btn ghost" @click="refresh">Retry</button>
+    </section>
+
+    <section v-if="tab === 'convert' && !backendError" class="panel">
+      <div class="drop-row">
+        <button class="btn" @click="addFiles">＋ Choose files</button>
+        <button class="btn ghost" :disabled="files.length === 0" @click="files = []">Clear</button>
+        <button class="btn ghost dir" @click="chooseOutputDir" :title="outputDir ?? 'Same folder as input'">
+          {{ outputDir ? `📁 ${outputDir}` : "📁 Output folder (optional)" }}
         </button>
       </div>
 
       <ul v-if="files.length" class="files">
-        <li v-for="info in infos" :key="info.name">
-          <strong>{{ info.name }}</strong>
-          <span>{{ info.format }}</span>
-          <span v-if="info.width">{{ info.width }}×{{ info.height }}</span>
-          <span>{{ (info.size_bytes / 1024).toFixed(1) }} KB</span>
-          <button @click="removeFile(files[infos.indexOf(info)] ?? info.name)">✕</button>
+        <li v-for="info in infos" :key="info.name" class="file-card">
+          <div class="file-badge">{{ info.format }}</div>
+          <div class="file-meta">
+            <strong>{{ info.name }}</strong>
+            <span class="dim">
+              <template v-if="info.width">{{ info.width }}×{{ info.height }} · </template>
+              {{ (info.size_bytes / 1024).toFixed(1) }} KB
+            </span>
+          </div>
+          <button
+            class="icon-btn"
+            :aria-label="`Remove ${info.name}`"
+            @click="removeFile(files[infos.indexOf(info)] ?? info.name)"
+          >
+            ✕
+          </button>
         </li>
       </ul>
-      <p v-else class="hint">Drop files via the picker — drag &amp; drop lands in a later iteration.</p>
+      <div v-else class="empty">
+        <div class="empty-icon">🖼️</div>
+        <p>No files yet — pick PNG, JPEG, WebP, BMP, TIFF or PDF files to convert.</p>
+      </div>
 
-      <div class="controls">
-        <label>
-          Format
+      <div class="controls card">
+        <label class="field">
+          <span>Format</span>
           <select v-model="target">
             <option v-for="f in encodable" :key="f.id" :value="f.id">
               {{ f.name }}
             </option>
           </select>
         </label>
-        <label>
-          Quality {{ quality }}
+        <label class="field grow">
+          <span>Quality · {{ quality }}</span>
           <input v-model.number="quality" type="range" min="1" max="100" />
         </label>
         <label class="check">
@@ -163,116 +221,459 @@ onMounted(() => void refresh());
         </label>
       </div>
 
-      <div class="row">
-        <span>Presets:</span>
-        <button v-for="p in presets" :key="p.key" @click="applyPreset(p.key)">
+      <div class="presets">
+        <span class="dim">Presets</span>
+        <button
+          v-for="p in presets"
+          :key="p.key"
+          class="chip"
+          @click="applyPreset(p.key)"
+          :title="`${p.name} → ${p.format.toUpperCase()} q${p.quality}`"
+        >
           {{ p.name }}
         </button>
       </div>
 
       <button class="primary" :disabled="!canConvert" @click="convert">
-        {{ busy ? "Converting…" : "Convert" }}
+        <span v-if="busy" class="spinner" aria-hidden="true" />{{ busy ? "Converting…" : `Convert ${files.length || ""}`.trim() }}
       </button>
+      <p v-if="progress" class="progress" role="status">{{ progress }}</p>
 
-      <p v-if="error" class="error">{{ error }}</p>
-      <div v-if="result" class="result">
-        <p>✅ {{ result.outputs.length }} written, {{ result.skipped.length }} skipped</p>
-        <ul>
-          <li v-for="o in result.outputs" :key="o">{{ o }}</li>
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
+      <div v-if="result" class="result card">
+        <p class="result-head">
+          ✅ {{ result.outputs.length }} written<span v-if="result.skipped.length">, {{ result.skipped.length }} skipped</span>
+        </p>
+        <ul class="out-list">
+          <li v-for="o in result.outputs" :key="o" class="out-row">
+            <button class="link" @click="reveal(o)" :title="`Reveal ${fileName(o)} in folder`">
+              📄 {{ fileName(o) }}
+            </button>
+            <button class="link dim folder-link" @click="reveal(o)" :title="`Open ${parentDir(o)}`">
+              {{ parentDir(o) }} ⧉
+            </button>
+          </li>
+          <li v-for="s in result.skipped" :key="s" class="out-row skipped">
+            <span>⏭ {{ fileName(s) }} <span class="dim">(already exists)</span></span>
+          </li>
         </ul>
-        <ul v-if="result.failures.length">
+        <ul v-if="result.failures.length" class="failures">
           <li v-for="f in result.failures" :key="f" class="error">{{ f }}</li>
         </ul>
+        <p v-if="revealFailed" class="error">{{ revealFailed }}</p>
       </div>
     </section>
 
-    <section v-else>
-      <button @click="refresh">Refresh</button>
-      <ul class="history">
-        <li v-for="h in history" :key="h.job_id">
-          <strong>{{ h.operation }}</strong> {{ h.input }} → {{ h.output }}
-          <span>{{ h.status }}</span>
+    <section v-else-if="!backendError" class="panel">
+      <div class="drop-row">
+        <button class="btn ghost" @click="refresh">↻ Refresh</button>
+      </div>
+      <ul v-if="history.length" class="history">
+        <li v-for="h in history" :key="h.job_id" class="hist-row">
+          <span class="op">{{ h.operation }}</span>
+          <span class="dim">{{ h.input }} → {{ h.output }}</span>
+          <span class="status">{{ h.status }}</span>
         </li>
       </ul>
-      <p v-if="!history.length" class="hint">No history yet — convert something first.</p>
+      <div v-else class="empty">
+        <div class="empty-icon">📜</div>
+        <p>No history yet — convert something first.</p>
+      </div>
     </section>
   </main>
 </template>
 
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f4ef;
+  --panel: #ffffff;
+  --ink: #1c1917;
+  --dim: #78716c;
+  --line: #e7e2d9;
+  --brand: #e86a2c;
+  --brand-deep: #c8521a;
+  --brand-soft: #fdeede;
+  --ok: #15803d;
+  --danger: #b3261e;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgb(28 25 23 / 0.06), 0 8px 24px -12px rgb(28 25 23 / 0.18);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 400px at 20% -10%, #fdeede 0%, transparent 60%),
+    radial-gradient(1000px 380px at 90% -10%, #e8f0fe 0%, transparent 55%),
+    var(--bg);
+  color: var(--ink);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+</style>
+
 <style scoped>
 .app {
-  max-width: 860px;
+  max-width: 920px;
   margin: 0 auto;
-  padding: 1.5rem;
-  font-family: system-ui, sans-serif;
+  padding: 2rem 1.5rem 3rem;
+}
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+.brand {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+}
+.logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.3rem;
+  color: white;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  box-shadow: var(--shadow);
 }
 header h1 {
   margin: 0;
+  font-size: 1.7rem;
+  letter-spacing: -0.02em;
 }
 .sub {
-  color: #666;
-  margin: 0.25rem 0 1rem;
+  color: var(--dim);
+  margin: 0.15rem 0 0;
+  font-size: 0.92rem;
 }
-nav {
+.tabs {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  gap: 0.4rem;
+  background: rgb(255 255 255 / 0.7);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem;
+  backdrop-filter: blur(6px);
 }
-button {
-  padding: 0.45rem 0.9rem;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #f7f7f7;
+.tabs button {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.45rem 1.1rem;
+  font-weight: 600;
+  color: var(--dim);
   cursor: pointer;
 }
-button:disabled {
+.tabs button.active {
+  background: var(--ink);
+  color: white;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.25rem;
+}
+.drop-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.btn {
+  padding: 0.55rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--ink);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.15s ease;
+}
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.drop-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border-left: 4px solid var(--danger);
+  margin-bottom: 1rem;
+}
+.banner code {
+  background: #f5f0e8;
+  border-radius: 6px;
+  padding: 0.05rem 0.35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.file-card {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.6rem 0.7rem;
+  background: #fffdf9;
+}
+.file-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  border-radius: 8px;
+  padding: 0.3rem 0.55rem;
+  white-space: nowrap;
+}
+.file-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.file-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dim {
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+.icon-btn {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 1rem;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 0.3rem 0.5rem;
+}
+.icon-btn:hover {
+  background: #f5f0e8;
+  color: var(--ink);
+}
+.empty {
+  margin-top: 1rem;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--dim);
+  background: rgb(255 255 255 / 0.6);
+}
+.empty-icon {
+  font-size: 2rem;
+}
+.controls {
+  margin-top: 1rem;
+}
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffdf9;
+  padding: 1rem;
+}
+.controls.card {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.field select,
+.field input[type="range"] {
+  accent-color: var(--brand);
+}
+.field select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  background: white;
+}
+.field.grow {
+  flex: 1;
+  min-width: 180px;
+}
+.check {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  font-size: 0.9rem;
+}
+.check input {
+  accent-color: var(--brand);
+  width: 1rem;
+  height: 1rem;
+}
+.presets {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--brand);
+  color: var(--brand-deep);
+  background: var(--brand-soft);
+}
+.primary {
+  margin-top: 1.1rem;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 0.85rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: white;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+}
+.primary:disabled {
   opacity: 0.5;
   cursor: default;
 }
-button.active,
-button.primary {
-  background: #e86a2c;
-  border-color: #e86a2c;
-  color: white;
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 0.4);
+  border-top-color: white;
+  animation: spin 0.7s linear infinite;
 }
-button.primary {
-  margin-top: 1rem;
-  font-size: 1.05rem;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
-.row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin: 0.75rem 0;
-}
-.files,
-.history {
-  list-style: none;
-  padding: 0;
-}
-.files li,
-.history li {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid #eee;
-}
-.controls {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin: 0.75rem 0;
-}
-.hint {
-  color: #888;
+.progress {
+  color: var(--dim);
+  font-size: 0.9rem;
 }
 .error {
-  color: #b3261e;
+  color: var(--danger);
 }
 .result {
   margin-top: 1rem;
+}
+.result-head {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+  color: var(--ok);
+}
+.out-list,
+.failures {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.out-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.45rem;
+}
+.out-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--brand-deep);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link:hover {
+  text-decoration: underline;
+}
+.folder-link {
+  font-weight: 400;
+  font-size: 0.82rem;
+}
+.out-row.skipped {
+  color: var(--dim);
+}
+.history {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.hist-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+}
+.op {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.status {
+  margin-left: auto;
+  font-size: 0.8rem;
+  background: #eef7ee;
+  color: var(--ok);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  white-space: nowrap;
 }
 </style>
