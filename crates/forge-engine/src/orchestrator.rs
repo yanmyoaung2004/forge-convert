@@ -136,18 +136,31 @@ impl<'a> Orchestrator<'a> {
             OutputTarget::File(path) => {
                 match crate::naming::apply_collision(path, options.on_collision)? {
                     Some(path) => path,
-                    None => return Ok(SingleOutcome::Skipped(input.to_path_buf())),
+                    // Skip: echo the EXISTING path so scripts keep a usable path.
+                    None => return Ok(SingleOutcome::Skipped(path.clone())),
                 }
             }
             OutputTarget::Directory(dir) => {
-                match resolve_output(
-                    input,
-                    request.output_format,
-                    Some(dir),
-                    options.on_collision,
-                )? {
-                    Some(path) => path,
-                    None => return Ok(SingleOutcome::Skipped(input.to_path_buf())),
+                match crate::naming::existing_candidate(input, request.output_format, Some(dir)) {
+                    Some(existing) if existing.exists() => {
+                        match resolve_output(
+                            input,
+                            request.output_format,
+                            Some(dir),
+                            options.on_collision,
+                        )? {
+                            Some(path) => path,
+                            // Skip: echo the EXISTING path, not the input.
+                            None => return Ok(SingleOutcome::Skipped(existing)),
+                        }
+                    }
+                    _ => resolve_output(
+                        input,
+                        request.output_format,
+                        Some(dir),
+                        options.on_collision,
+                    )?
+                    .expect("fresh candidate cannot be Skip"),
                 }
             }
         };
@@ -410,7 +423,7 @@ mod tests {
     #[test]
     fn test_skip_policy_records_skip_not_failure() {
         let scratch = Scratch::new("orchestrator-skip");
-        let (mut request, input) = test_request(&scratch.dir, "logo.png");
+        let (mut request, _input) = test_request(&scratch.dir, "logo.png");
         // Pre-create the output so Skip triggers.
         let existing = scratch.dir.join("logo.webp");
         std::fs::write(&existing, b"taken").expect("seed");
@@ -432,7 +445,8 @@ mod tests {
         let result = engine.run(request, &sink, &NeverCancel).unwrap();
         assert!(result.outputs.is_empty());
         assert!(result.failures.is_empty(), "skip is not a failure");
-        assert_eq!(result.skipped, vec![input]);
+        // Skip echoes the EXISTING output path (usable by scripts), not the input.
+        assert_eq!(result.skipped, vec![existing.clone()]);
         // Seeded file untouched.
         assert_eq!(std::fs::read(&existing).unwrap(), b"taken");
     }

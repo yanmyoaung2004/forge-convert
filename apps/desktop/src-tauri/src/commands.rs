@@ -79,8 +79,16 @@ pub fn get_format_capabilities() -> Vec<FormatInfo> {
             FormatInfo {
                 id: id.to_string(),
                 name: descriptor.name.to_string(),
-                extensions: descriptor.extensions.iter().map(|s| s.to_string()).collect(),
-                mime_types: descriptor.mime_types.iter().map(|s| s.to_string()).collect(),
+                extensions: descriptor
+                    .extensions
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                mime_types: descriptor
+                    .mime_types
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
                 can_decode: descriptor.can_decode,
                 can_encode: descriptor.can_encode,
                 supports_alpha: descriptor.supports_alpha,
@@ -107,8 +115,11 @@ pub fn get_file_info(path: String) -> CommandResult<FileInfo> {
     let path = PathBuf::from(&path);
     let fs = StdFileSystem;
     let bytes = fs.read(&path).map_err(CommandError::from)?;
-    let format = forge_core::detect_input_format(&path, Some(&bytes)).map_err(CommandError::from)?;
-    let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(bytes.len() as u64);
+    let format =
+        forge_core::detect_input_format(&path, Some(&bytes)).map_err(CommandError::from)?;
+    let size_bytes = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(bytes.len() as u64);
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -264,8 +275,16 @@ pub fn convert_image(args: ConvertArgs) -> CommandResult<ConvertDone> {
         .run(request, &NullSink, &NeverCancel)
         .map_err(CommandError::from)?;
     Ok(ConvertDone {
-        outputs: result.outputs.iter().map(|p| p.display().to_string()).collect(),
-        skipped: result.skipped.iter().map(|p| p.display().to_string()).collect(),
+        outputs: result
+            .outputs
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect(),
+        skipped: result
+            .skipped
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect(),
         failures: result.failures.clone(),
     })
 }
@@ -283,10 +302,9 @@ pub(crate) struct ImagesToPdfArgs {
 pub fn convert_images_to_pdf(args: ImagesToPdfArgs) -> CommandResult<String> {
     use forge_core::{Orientation, PageSizeMm, PdfWriteSpec};
     if args.inputs.is_empty() {
-        return Err(ForgeError::InvalidConfiguration(
-            "at least one input is required".to_string(),
-        )
-        .into());
+        return Err(
+            ForgeError::InvalidConfiguration("at least one input is required".to_string()).into(),
+        );
     }
     let fs = StdFileSystem;
     let decoder = ForgeImageDecoder;
@@ -294,11 +312,22 @@ pub fn convert_images_to_pdf(args: ImagesToPdfArgs) -> CommandResult<String> {
     for input in &args.inputs {
         let path = PathBuf::from(input);
         let bytes = fs.read(&path).map_err(CommandError::from)?;
-        let format = forge_core::detect_input_format(&path, Some(&bytes)).map_err(CommandError::from)?;
-        images.push(decoder.decode(&bytes, Some(format)).map_err(CommandError::from)?);
+        let format =
+            forge_core::detect_input_format(&path, Some(&bytes)).map_err(CommandError::from)?;
+        images.push(
+            decoder
+                .decode(&bytes, Some(format))
+                .map_err(CommandError::from)?,
+        );
     }
     let spec = PdfWriteSpec {
-        page: match args.page.as_deref().unwrap_or("a4").to_ascii_lowercase().as_str() {
+        page: match args
+            .page
+            .as_deref()
+            .unwrap_or("a4")
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "letter" => PageSizeMm::LETTER,
             _ => PageSizeMm::A4,
         },
@@ -310,9 +339,12 @@ pub fn convert_images_to_pdf(args: ImagesToPdfArgs) -> CommandResult<String> {
         ..Default::default()
     };
     let writer = ForgePdfWriter;
-    let bytes = writer.write_images(&images, &spec).map_err(CommandError::from)?;
+    let bytes = writer
+        .write_images(&images, &spec)
+        .map_err(CommandError::from)?;
     let output = PathBuf::from(&args.output);
-    fs.write_atomic(&output, &bytes).map_err(CommandError::from)?;
+    fs.write_atomic(&output, &bytes)
+        .map_err(CommandError::from)?;
     Ok(output.display().to_string())
 }
 

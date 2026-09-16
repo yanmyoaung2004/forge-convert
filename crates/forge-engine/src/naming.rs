@@ -26,6 +26,22 @@ pub fn resolve_output(
     apply_collision(&base, policy)
 }
 
+/// The would-be output path BEFORE collision policy (same basename + new
+/// extension). Used to echo the existing path on Skip.
+#[must_use]
+pub fn existing_candidate(
+    input: &Path,
+    format: ImageFormat,
+    output_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    let stem = canonical_stem_of(input);
+    let file = format!("{stem}.{ext}", ext = format.extension());
+    Some(match output_dir {
+        Some(dir) => dir.join(file),
+        None => input.with_file_name(file),
+    })
+}
+
 /// Apply `policy` to `candidate`. Returns `None` for Skip-when-exists
 /// (caller records the skip without writing).
 pub fn apply_collision(candidate: &Path, policy: CollisionPolicy) -> Result<Option<PathBuf>> {
