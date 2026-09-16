@@ -948,6 +948,7 @@ dependencies = [
  "base64",
  "flate2",
  "getrandom",
+ "image",
  "lopdf",
  "serde",
  "serde_derive",
