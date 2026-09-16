@@ -8,4 +8,5 @@ rust-version.workspace = true
 [dependencies]
 forge-core = { path = "../forge-core" }
 thiserror.workspace = true
-# Phase 5 adds: printpdf 0.12.8 (image→PDF). Renderer stays a stub (Unsupported).
+printpdf.workspace = true
+# Renderer stays a stub (Unsupported) until qualified (ADR 009).

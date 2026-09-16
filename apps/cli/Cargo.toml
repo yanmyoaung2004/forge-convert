@@ -12,6 +12,10 @@ path = "src/main.rs"
 [dependencies]
 forge-core = { path = "../../crates/forge-core" }
 forge-engine = { path = "../../crates/forge-engine" }
-# Phase 2+ wires adapters here: forge-image, forge-pdf, forge-store.
-# Phase 7 adds: clap 4.6 with `derive`, tokio, tracing, rusqlite, image, webp, printpdf.
-# (Deps live in their owning crates, never all in the CLI — see ADR 004/010.)
+forge-image = { path = "../../crates/forge-image" }
+forge-pdf = { path = "../../crates/forge-pdf" }
+forge-store = { path = "../../crates/forge-store" }
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true

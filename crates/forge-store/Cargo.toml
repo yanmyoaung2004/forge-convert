@@ -8,4 +8,4 @@ rust-version.workspace = true
 [dependencies]
 forge-core = { path = "../forge-core" }
 thiserror.workspace = true
-# Phase 9 adds: rusqlite 0.40 with `bundled`.
+rusqlite.workspace = true
