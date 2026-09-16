@@ -10,8 +10,8 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand, ValueEnum};
 use forge_core::{
     ConversionOptions, ConversionRequest, ConversionResult, FileSystem as _, ForgeError,
-    ImageDecoder as _, ImageFormat, JobEventSink, JobId, JobProgress, MetadataPolicy, NeverCancel,
-    OutputTarget, PdfRenderer as _, PdfWriteSpec, PdfWriter as _,
+    HistoryStore as _, ImageDecoder as _, ImageFormat, JobEventSink, JobId, JobProgress,
+    MetadataPolicy, NeverCancel, OutputTarget, PdfRenderer as _, PdfWriteSpec, PdfWriter as _,
 };
 use forge_engine::{BatchConfig, CancelFlag, EngineDeps, NullSink, Orchestrator, StdFileSystem};
 use forge_image::{FitWithinStep, ForgeImageDecoder, ForgeImageEncoder};
@@ -109,9 +109,15 @@ enum Command {
         /// Output file or directory.
         #[arg(long)]
         output: Option<PathBuf>,
-        /// Preset name (`web` today; more in Phase 8).
+        /// Preset key (web, hq-jpeg, small-jpeg, lossless-png, webp).
         #[arg(long, default_value_t = String::from("web"))]
         preset: String,
+    },
+    /// Show recent conversion history (local SQLite, metadata only).
+    History {
+        /// Max rows (default 20).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
 }
 
@@ -293,6 +299,19 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             {
                 return Err(ForgeError::InvalidFile(result.failures.join("; ")));
             }
+            if let Some(first) = result.outputs.first() {
+                record_history(
+                    "convert",
+                    &input,
+                    first,
+                    target,
+                    &ConversionOptions {
+                        quality,
+                        ..Default::default()
+                    },
+                    0,
+                );
+            }
             Ok(())
         }
         Command::Batch {
@@ -457,7 +476,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 ))
             })?;
             let before = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
-            let options = named.options.validated()?;
+            let options = named.options.clone().validated()?;
             let dir = output.clone().map_or_else(
                 || {
                     input
@@ -505,9 +524,103 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 "preset {}: before: {before} bytes; after: {after} bytes; saved: {savings:.1}%",
                 named.name
             );
+            record_history(
+                "optimize",
+                &input,
+                out_path,
+                named.output_format,
+                &named.options,
+                out_path.metadata().map(|m| m.len()).unwrap_or(0),
+            );
+            Ok(())
+        }
+        Command::History { limit } => {
+            let db = open_history_db()?;
+            let entries = forge_store::HistoryDb::recent(&db, limit)?;
+            if entries.is_empty() {
+                println!("no history yet");
+                return Ok(());
+            }
+            for entry in entries {
+                println!(
+                    "{} | {} | {} → {} | {:?} | {}ms",
+                    entry.job_id.0,
+                    entry.operation,
+                    entry.input_name,
+                    entry.output_name,
+                    entry.status,
+                    entry.duration_ms
+                );
+            }
             Ok(())
         }
     }
+}
+
+/// Default history DB path: OS data dir or `.forgeconvert/history.db` fallback.
+fn history_db_path() -> PathBuf {
+    if let Some(dir) = dirs_data_dir() {
+        return dir.join("forgeconvert").join("history.db");
+    }
+    PathBuf::from(".forgeconvert").join("history.db")
+}
+
+/// Platform data dir without a new dependency (env-first, then home).
+fn dirs_data_dir() -> Option<PathBuf> {
+    for key in ["XDG_DATA_HOME", "LOCALAPPDATA", "APPDATA"] {
+        if let Ok(dir) = std::env::var(key) {
+            if !dir.is_empty() {
+                return Some(PathBuf::from(dir));
+            }
+        }
+    }
+    std::env::var("HOME")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".local").join("share"))
+}
+
+/// Open (creating) the history DB; failures degrade to in-memory so a
+/// read-only home never breaks conversion.
+fn open_history_db() -> Result<forge_store::HistoryDb, ForgeError> {
+    let path = history_db_path();
+    forge_store::HistoryDb::open(&path).or_else(|_| forge_store::HistoryDb::in_memory())
+}
+
+/// Best-effort history write: never fails the conversion it records.
+fn record_history(
+    operation: &str,
+    input: &Path,
+    output: &Path,
+    format: forge_core::ImageFormat,
+    options: &ConversionOptions,
+    duration_ms: u64,
+) {
+    let Ok(db) = open_history_db() else {
+        return;
+    };
+    let entry = forge_core::HistoryEntry {
+        job_id: JobId::generate(),
+        operation: operation.to_string(),
+        input_name: input
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string(),
+        output_name: output
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string(),
+        output_format: format,
+        status: forge_core::JobStatus::Completed,
+        duration_ms,
+        options_json: format!(
+            "{{\"quality\":{},\"metadata\":\"{:?}\"}}",
+            options.quality, options.metadata
+        ),
+    };
+    use forge_core::HistoryStore as _;
+    let _ = db.record(entry);
 }
 /// `--output foo.webp` (has image extension) → explicit file;
 /// `--output ./dir` → directory. Nonexistent paths with an image
