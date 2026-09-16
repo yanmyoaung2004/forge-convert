@@ -10,3 +10,12 @@ forge-core = { path = "../forge-core" }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+forge-image = { path = "../forge-image" }
+tokio.workspace = true
+
+[[bench]]
+name = "throughput"
+harness = false

@@ -164,16 +164,23 @@ impl HistoryStore for HistoryDb {
             .map_err(|e| ForgeError::InvalidFile(format!("sqlite recent: {e}")))?;
         let mut entries = Vec::new();
         for row in rows {
-            let (job_id, operation, input_name, output_name, format, status, duration_ms, options_json) =
-                row.map_err(|e| ForgeError::InvalidFile(format!("sqlite row: {e}")))?;
+            let (
+                job_id,
+                operation,
+                input_name,
+                output_name,
+                format,
+                status,
+                duration_ms,
+                options_json,
+            ) = row.map_err(|e| ForgeError::InvalidFile(format!("sqlite row: {e}")))?;
             entries.push(HistoryEntry {
                 job_id: forge_core::JobId(job_id),
                 operation,
                 input_name,
                 output_name,
-                output_format: forge_core::ImageFormat::from_extension(&format).unwrap_or(
-                    forge_core::ImageFormat::Png,
-                ),
+                output_format: forge_core::ImageFormat::from_extension(&format)
+                    .unwrap_or(forge_core::ImageFormat::Png),
                 status: parse_status(&status),
                 duration_ms: duration_ms.max(0) as u64,
                 options_json,
@@ -256,9 +263,6 @@ mod tests {
         db.set_setting("theme", "dark").unwrap();
         assert_eq!(db.get_setting("theme").unwrap(), Some("dark".to_string()));
         db.set_setting("theme", "light").unwrap();
-        assert_eq!(
-            db.get_setting("theme").unwrap(),
-            Some("light".to_string())
-        );
+        assert_eq!(db.get_setting("theme").unwrap(), Some("light".to_string()));
     }
 }
