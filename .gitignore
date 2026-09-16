@@ -1,0 +1,41 @@
+# Rust / Node / Tauri / IDE — ForgeConvert
+/target/
+**/*.rs.bk
+Cargo.lock
+# (keep Cargo.lock for binaries/apps; harmless for libs)
+
+# Node / frontend
+node_modules/
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+*.local
+
+# Tauri
+*.AppImage
+*.dmg
+*.exe
+*.msi
+src-tauri/binaries/
+
+# SQLite local state
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# Test / bench artefacts
+/tmp-forgeconvert-*/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
