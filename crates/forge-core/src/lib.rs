@@ -19,6 +19,6 @@ pub use domain::{
 pub use domain::{ColorSpace, PixelFormat};
 pub use error::{ForgeError, Result};
 pub use ports::{
-    Clock, FileSystem, HistoryStore, ImageDecoder, ImageEncoder, JobEventSink, JobRepository,
-    PdfRenderer, PdfWriter, TransformStep,
+    CancelToken, Clock, ConversionEngine, FileSystem, HistoryStore, ImageDecoder, ImageEncoder,
+    JobEventSink, JobRepository, JobSnapshot, NeverCancel, PdfRenderer, PdfWriter, TransformStep,
 };
