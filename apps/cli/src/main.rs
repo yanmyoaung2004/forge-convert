@@ -76,6 +76,8 @@ enum Command {
         on_collision: CliCollision,
     },
     /// Convert a directory of images with a bounded worker pool.
+    /// Same resize/compression flags as `convert` (parity by construction:
+    /// both arms build options through `shared_options`).
     Batch {
         /// Input directory.
         dir: PathBuf,
@@ -88,11 +90,46 @@ enum Command {
         /// Quality 1–100.
         #[arg(long, default_value_t = 80)]
         quality: u8,
+        /// Exact width (needs --height; forces size, aspect may change).
+        #[arg(long, requires = "height")]
+        width: Option<u32>,
+        /// Exact height (needs --width; forces size, aspect may change).
+        #[arg(long, requires = "width")]
+        height: Option<u32>,
+        /// Fit inside WIDTHxHEIGHT (e.g. 800x600), aspect kept.
+        #[arg(long, value_name = "WIDTHxHEIGHT", conflicts_with_all = ["width", "max_width"])]
+        fit: Option<String>,
+        /// Cover WIDTHxHEIGHT then center-crop, aspect kept.
+        #[arg(long, value_name = "WIDTHxHEIGHT", conflicts_with_all = ["width", "max_width"])]
+        fill: Option<String>,
+        /// Max width, legacy fit-inside (aspect preserved).
+        #[arg(long, conflicts_with = "fit")]
+        max_width: Option<u32>,
+        /// Max height, legacy fit-inside (aspect preserved).
+        #[arg(long, conflicts_with = "fit")]
+        max_height: Option<u32>,
+        /// Resample filter.
+        #[arg(long, value_enum, default_value_t = CliFilter::Lanczos3)]
+        filter: CliFilter,
+        /// Allow upscaling small images to fit/fill boxes.
+        #[arg(long, default_value_t = false)]
+        upscale: bool,
+        /// PNG compression level 0 (fast) – 9 (smallest).
+        #[arg(long, value_name = "0-9")]
+        png_level: Option<u8>,
+        /// WebP lossless (exact pixels) instead of lossy quality.
+        #[arg(long, default_value_t = false, conflicts_with = "quality")]
+        webp_lossless: bool,
+        /// Strip metadata.
+        #[arg(long, default_value_t = false)]
+        strip_metadata: bool,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
         /// Max files in flight (default: CPU count).
         #[arg(long)]
         jobs: Option<usize>,
     },
-    /// Pack images (one page each) into a PDF.
     Pdf {
         /// Input images.
         #[arg(required = true)]
@@ -287,32 +324,10 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             on_collision,
         } => {
             let target = to.to_image_format();
-            let resize = parse_resize(
-                width, height, fit, fill, max_width, max_height, filter, upscale,
+            let options = shared_options(
+                target, quality, width, height, fit, fill, max_width, max_height, filter, upscale,
+                png_level, webp_lossless, strip_metadata, on_collision,
             )?;
-            let compression = parse_compression(target, quality, png_level, webp_lossless)?;
-            let max_dimensions = match (max_width, max_height) {
-                (None, None) => None,
-                (w, h) => Some(forge_core::ImageDimensions::new(
-                    w.unwrap_or(u32::MAX),
-                    h.unwrap_or(u32::MAX),
-                )?),
-            };
-            let options = ConversionOptions {
-                quality,
-                max_dimensions,
-                resize,
-                compression,
-                metadata: if strip_metadata {
-                    MetadataPolicy::Remove
-                } else {
-                    MetadataPolicy::Preserve
-                },
-                background: Default::default(),
-                on_collision: on_collision.to_policy(),
-            }
-            .validated()?;
-            let target = to.to_image_format();
             let output_target = match output {
                 Some(path) if is_explicit_file(&path) => OutputTarget::File(path),
                 Some(dir) => OutputTarget::Directory(dir),
@@ -379,9 +394,26 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             to,
             output_dir,
             quality,
+            width,
+            height,
+            fit,
+            fill,
+            max_width,
+            max_height,
+            filter,
+            upscale,
+            png_level,
+            webp_lossless,
+            strip_metadata,
+            on_collision,
             jobs,
         } => {
             let target = to.to_image_format();
+            // Same builder as `convert` — parity by construction.
+            let template = shared_options(
+                target, quality, width, height, fit, fill, max_width, max_height, filter, upscale,
+                png_level, webp_lossless, strip_metadata, on_collision,
+            )?;
             let out_dir = output_dir.unwrap_or_else(|| dir.join("converted"));
             let entries = std::fs::read_dir(&dir).map_err(|e| {
                 ForgeError::InvalidFile(format!("cannot list {}: {e}", dir.display()))
@@ -419,7 +451,9 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 let cancel = CancelFlag::new();
                 let report = forge_engine::run_batch(
                     inputs,
-                    move |input: PathBuf| convert_one_sync(input, target, out_dir.clone(), quality),
+                    move |input: PathBuf| {
+                        convert_one_sync(input, target, out_dir.clone(), template.clone())
+                    },
                     &config,
                     sink,
                     &job_id,
@@ -791,12 +825,56 @@ fn parse_compression(
     Ok(None)
 }
 
-/// Synchronous single-file conversion for the batch worker threads.
+/// One builder for `convert` and `batch` (parity by construction).
+/// Both arms pass their identical flags here; divergence is a compile error.
+#[allow(clippy::too_many_arguments)]
+fn shared_options(
+    target: ImageFormat,
+    quality: u8,
+    width: Option<u32>,
+    height: Option<u32>,
+    fit: Option<String>,
+    fill: Option<String>,
+    max_width: Option<u32>,
+    max_height: Option<u32>,
+    filter: CliFilter,
+    upscale: bool,
+    png_level: Option<u8>,
+    webp_lossless: bool,
+    strip_metadata: bool,
+    on_collision: CliCollision,
+) -> Result<ConversionOptions, ForgeError> {
+    let resize = parse_resize(
+        width, height, fit, fill, max_width, max_height, filter, upscale,
+    )?;
+    let compression = parse_compression(target, quality, png_level, webp_lossless)?;
+    let max_dimensions = match (max_width, max_height) {
+        (None, None) => None,
+        (w, h) => Some(forge_core::ImageDimensions::new(
+            w.unwrap_or(u32::MAX),
+            h.unwrap_or(u32::MAX),
+        )?),
+    };
+    ConversionOptions {
+        quality,
+        max_dimensions,
+        resize,
+        compression,
+        metadata: if strip_metadata {
+            MetadataPolicy::Remove
+        } else {
+            MetadataPolicy::Preserve
+        },
+        background: Default::default(),
+        on_collision: on_collision.to_policy(),
+    }
+    .validated()
+}
 fn convert_one_sync(
     input: PathBuf,
     target: ImageFormat,
     out_dir: PathBuf,
-    quality: u8,
+    template: ConversionOptions,
 ) -> Result<Option<PathBuf>, ForgeError> {
     let fs = StdFileSystem;
     let decoder = ForgeImageDecoder;
@@ -809,11 +887,7 @@ fn convert_one_sync(
         transforms: &transforms,
         fs: &fs,
     });
-    let options = ConversionOptions {
-        quality,
-        ..Default::default()
-    }
-    .validated()?;
+    let options = template.validated()?;
     let request = ConversionRequest {
         inputs: vec![input],
         output_format: target,
