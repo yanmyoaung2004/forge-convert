@@ -1,5 +1,7 @@
 # ForgeConvert
 
+![version](https://img.shields.io/github/v/release/yanmyoaung2004/forge-convert) ![ci](https://github.com/yanmyoaung2004/forge-convert/actions/workflows/ci.yml/badge.svg) ![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+
 Local-first, privacy-preserving desktop utility for image/PDF conversion, batch processing, optimization, and inspection. Files never leave your machine — no uploads, no accounts, no telemetry, no AI in the conversion pipeline.
 
 Stack: **Tauri 2 + Rust core + Vue 3 + TypeScript + Vite + SQLite** (history/settings only; files stay files).
@@ -54,16 +56,24 @@ pnpm --dir dev/apps/desktop exec vite build
 pnpm --dir dev/apps/desktop exec tauri dev
 ```
 
-## Releases
+## Download — v0.1.0
 
-Push a version tag to cut a release. CI builds the CLI for
-Windows/Linux/macOS plus the Windows desktop installers (MSI/NSIS)
-and attaches everything to the GitHub Release:
+> ⏳ The `v0.1.0` release build is still running in CI. This section activates
+> automatically once the Release is published — check the
+> [Releases page](https://github.com/yanmyoaung2004/forge-convert/releases).
+> Expected assets:
 
-```powershell
-git tag v0.2.0
-git push origin v0.2.0
-```
+| Asset | What | How to run |
+|---|---|---|
+| `forgeconvert-windows-x86_64.exe` | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
+| `forgeconvert-linux-x86_64` | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
+| `forgeconvert-macos-aarch64` | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
+| `ForgeConvert_0.1.0_x64_en-US.msi` | Desktop installer | Double-click (per-machine install) |
+| `ForgeConvert_0.1.0_x64-setup.exe` | Desktop installer | Double-click (NSIS wizard) |
+
+> v0.1.0 is the first public snapshot: CLI is fully working; desktop UI converts via the same engine; PDF → image returns honest `Unsupported` until a renderer qualifies (see `dev/docs/adr/009-pdf-subsystem.md`).
+
+Cutting the next release (maintainers): `git tag v0.2.0 && git push origin v0.2.0` — CI rebuilds everything above automatically.
 ## Architecture
 
 Clean layered + hexagonal (ports & adapters), dependencies point inward:
