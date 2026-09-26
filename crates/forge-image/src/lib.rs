@@ -52,7 +52,43 @@ impl ImageDecoder for ForgeImageDecoder {
         })?;
         let dyn_image = image::load_from_memory_with_format(bytes, image_format)
             .map_err(|e| ForgeError::DecodeFailed(e.to_string()))?;
+        // EXIF auto-rotate (JPEG/TIFF camera output): apply the orientation
+        // transform during decode so downstream sees upright pixels.
+        // Malformed EXIF → ignore + proceed (never fail the conversion).
+        let dyn_image = apply_exif_orientation(dyn_image, bytes);
         Ok(canonicalize(&dyn_image))
+    }
+}
+
+/// EXIF orientation → upright pixels (values 1–8 per JEITA CP-3451).
+/// Returns the input unchanged for orientation 1 / missing / malformed EXIF.
+fn apply_exif_orientation(image: image::DynamicImage, bytes: &[u8]) -> image::DynamicImage {
+    let orientation = exif_orientation(bytes);
+    match orientation {
+        // `image` ops consume/return owned images; geometry per EXIF spec:
+        // 2 = flip-H, 3 = 180°, 4 = flip-V, 5 = transpose, 6 = 90°CW, 7 = transverse, 8 = 270°CW.
+        None | Some(1) => image,
+        Some(2) => image.fliph(),
+        Some(3) => image.rotate180(),
+        Some(4) => image.flipv(),
+        Some(5) => image.rotate90().fliph(),
+        Some(6) => image.rotate90(),
+        Some(7) => image.rotate270().fliph(),
+        Some(8) => image.rotate270(),
+        _ => image,
+    }
+}
+
+/// Read EXIF orientation (1–8) from `bytes`; `None` when absent/unreadable.
+/// Pure-Rust `kamadak-exif`, `read_from_container` over an in-memory cursor.
+fn exif_orientation(bytes: &[u8]) -> Option<u32> {
+    use exif::{In, Reader, Tag};
+    let mut cursor = std::io::Cursor::new(bytes);
+    let exif = Reader::new().read_from_container(&mut cursor).ok()?;
+    let field = exif.get_field(Tag::Orientation, In::PRIMARY)?;
+    match field.value.get_uint(0) {
+        Some(v @ 1..=8) => Some(v),
+        _ => None,
     }
 }
 
@@ -79,6 +115,12 @@ impl ImageEncoder for ForgeImageEncoder {
         Self::OUTPUTS
     }
 
+    /// Encode. Metadata honesty: re-encoding through `image`/`webp`
+    /// encoders does NOT carry EXIF/ICC/XMP chunks — output metadata is
+    /// effectively stripped regardless of `MetadataPolicy`. `Preserve`
+    /// therefore means "don't strip anything we control" (pixel-affecting
+    /// behavior like orientation is already applied at decode); full
+    /// metadata round-tripping is future work, tracked, not claimed.
     fn encode(
         &self,
         image: &CanonicalImage,
@@ -654,5 +696,71 @@ mod tests {
             .decode(&lossless, Some(ImageFormat::Webp))
             .unwrap();
         assert_eq!(back.dimensions, rgba_fixture().dimensions);
+    }
+
+    /// Build a minimal JPEG with an EXIF orientation tag by hand:
+    /// SOI + APP1(Exif\0\0 + TIFF LE header + IFD0[Orientation=SHORT `value`]) + EOI.
+    /// Decoders tolerate the truncated payload for orientation parsing purposes;
+    /// `exif_orientation` only needs the header, not image data.
+    fn jpeg_with_orientation(value: u16) -> Vec<u8> {
+        let mut exif_payload = b"Exif\0\0".to_vec();
+        // TIFF header: II, 42, IFD0 offset 8.
+        exif_payload.extend_from_slice(&[0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00]);
+        // IFD0: 1 entry.
+        exif_payload.extend_from_slice(&[0x01, 0x00]);
+        // Tag 0x0112 (Orientation), type SHORT (3), count 1, value + pad.
+        exif_payload.extend_from_slice(&[0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00]);
+        exif_payload.extend_from_slice(&value.to_le_bytes());
+        exif_payload.extend_from_slice(&[0x00, 0x00]);
+        // Next IFD offset 0.
+        exif_payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        let len = (exif_payload.len() + 2) as u16;
+        jpeg.extend_from_slice(&len.to_be_bytes());
+        jpeg.extend_from_slice(&exif_payload);
+        jpeg.extend_from_slice(&[0xFF, 0xD9]);
+        jpeg
+    }
+
+    #[test]
+    fn test_exif_orientation_parsed_1_to_8() {
+        for value in 1..=8u16 {
+            assert_eq!(
+                exif_orientation(&jpeg_with_orientation(value)),
+                Some(value as u32),
+                "orientation {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exif_orientation_missing_or_malformed_is_none() {
+        assert_eq!(exif_orientation(b"not-a-jpeg"), None);
+        assert_eq!(exif_orientation(&[0xFF, 0xD8, 0xFF, 0xD9]), None);
+        // Truncated EXIF payload → parse fails → None, never panics.
+        assert_eq!(exif_orientation(&[0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x08, 0x45, 0x78]), None);
+        // Orientation value 0 / 9 out of range → None.
+        assert_eq!(exif_orientation(&jpeg_with_orientation(0)), None);
+        assert_eq!(exif_orientation(&jpeg_with_orientation(9)), None);
+    }
+
+    #[test]
+    fn test_apply_orientation_swaps_dims_for_90_270() {
+        // 4×2 landscape fixture; orientation 6 (90°CW) → 2×4 portrait.
+        let landscape = CanonicalImage {
+            dimensions: ImageDimensions::new(4, 2).unwrap(),
+            pixel_format: PixelFormat::Rgba8,
+            color_space: ColorSpace::Srgb,
+            pixels: [10, 20, 30, 255].repeat(4 * 2),
+            has_alpha: true,
+        };
+        let dyn_image = to_dynamic(&landscape).unwrap();
+        // Simulate decode-time rotation by calling the transform directly.
+        let rotated = apply_exif_orientation(dyn_image, &jpeg_with_orientation(6));
+        assert_eq!((rotated.width(), rotated.height()), (2, 4));
+        // Orientation 1 / missing → untouched dims.
+        let dyn_image = to_dynamic(&landscape).unwrap();
+        let same = apply_exif_orientation(dyn_image, &jpeg_with_orientation(1));
+        assert_eq!((same.width(), same.height()), (4, 2));
     }
 }

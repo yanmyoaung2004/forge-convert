@@ -9,4 +9,5 @@ rust-version.workspace = true
 forge-core = { path = "../forge-core" }
 thiserror.workspace = true
 image.workspace = true
+kamadak-exif.workspace = true
 webp.workspace = true
