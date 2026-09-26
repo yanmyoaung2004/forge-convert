@@ -40,3 +40,6 @@ src-tauri/binaries/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Personal / local notes (never pushed)
+yma/
