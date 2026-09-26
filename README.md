@@ -17,13 +17,11 @@ Stack: **Tauri 2 + Rust core + Vue 3 + TypeScript + Vite + SQLite** (history/set
 
 ## Quick start
 
-```powershell
-cd dev
-cargo build -p forgeconvert
-./target/debug/forgeconvert.exe --help
-```
+The repo root is the checkout root (`forge-convert/`); all commands run from there.
 
 ```powershell
+cargo build -p forgeconvert
+./target/debug/forgeconvert.exe --help
 ./target/debug/forgeconvert.exe info photo.png
 ./target/debug/forgeconvert.exe convert photo.png --to webp --quality 80
 ./target/debug/forgeconvert.exe convert photo.png --to webp --width 800 --height 600
@@ -50,12 +48,22 @@ Benches: `cargo bench -p forge-engine --bench throughput -- --quick`.
 Desktop UI:
 
 ```powershell
-pnpm install --dir apps/desktop
-pnpm --dir apps/desktop exec vue-tsc --noEmit
-pnpm --dir apps/desktop exec vite build
-pnpm --dir apps/desktop exec tauri dev
+pnpm install --dir dev/apps/desktop
+pnpm --dir dev/apps/desktop exec vue-tsc --noEmit
+pnpm --dir dev/apps/desktop exec vite build
+pnpm --dir dev/apps/desktop exec tauri dev
 ```
 
+## Releases
+
+Push a version tag to cut a release. CI builds the CLI for
+Windows/Linux/macOS plus the Windows desktop installers (MSI/NSIS)
+and attaches everything to the GitHub Release:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
 ## Architecture
 
 Clean layered + hexagonal (ports & adapters), dependencies point inward:
@@ -70,17 +78,17 @@ apps/* (CLI, Tauri UI — thin: parse → call engine → render)
 - Canonical-image rule: every decoder → `ImageBuffer` → transform pipeline → encoder. No N×M converters.
 - Writes: temp → flush/sync → validate → atomic rename. Collisions: Rename-auto default, else `OutputExists`.
 
-## Layout (repo root is `dev/`)
+## Layout
 
 | Path | What |
 |---|---|
-| `product.md` | Product + master agent spec (authoritative) |
-| `docs/PLAN.md` | Phased build plan 0→10 + dependency justifications |
-| `docs/adr/` | Architecture decision records 001–012 |
-| `docs/architecture/` | Layer + pipeline docs |
-| `PROGRESS.md` | Step-by-step dev record (every step → commit) |
-| `crates/forge-{core,engine,image,pdf,store}/` | Rust workspace members |
-| `apps/cli/` | `forgeconvert` binary |
-| `apps/desktop/` | Tauri 2 + Vue 3 frontend |
-| `tests/{integration,fixtures,golden}/` | Round-trips, fixtures, property tests |
-| `yma/` | Personal local notes (git-ignored, never pushed) |
+| `dev/product.md` | Product + master agent spec (authoritative) |
+| `dev/docs/PLAN.md` | Phased build plan 0→10 + dependency justifications |
+| `dev/docs/adr/` | Architecture decision records 001–012 |
+| `dev/docs/architecture/` | Layer + pipeline docs |
+| `dev/PROGRESS.md` | Step-by-step dev record (every step → commit) |
+| `dev/crates/forge-{core,engine,image,pdf,store}/` | Rust workspace members |
+| `dev/apps/cli/` | `forgeconvert` binary |
+| `dev/apps/desktop/` | Tauri 2 + Vue 3 frontend |
+| `dev/tests/{integration,fixtures,golden}/` | Round-trips, fixtures, property tests |
+| `dev/yma/` | Personal local notes (git-ignored, never pushed) |

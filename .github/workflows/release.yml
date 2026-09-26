@@ -1,0 +1,89 @@
+name: release
+
+# Cut a release by pushing a version tag:
+#   git tag v0.2.0 && git push origin v0.2.0
+# Builds CLI binaries (Windows/Linux/macOS) + Windows desktop
+# installers (MSI/NSIS) and attaches them to the GitHub Release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  cli:
+    name: cli (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            exe: forgeconvert.exe
+            asset: forgeconvert-windows-x86_64.exe
+          - os: ubuntu-latest
+            exe: forgeconvert
+            asset: forgeconvert-linux-x86_64
+          - os: macos-latest
+            exe: forgeconvert
+            asset: forgeconvert-macos-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build CLI
+        run: cargo build --release -p forgeconvert
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/release/${{ matrix.exe }}" "dist/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  desktop-windows:
+    name: desktop installers (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Build Tauri bundles
+        run: pnpm exec tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-installers
+          # Resolved against the repo root, not the step working directory.
+          path: |
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [cli, desktop-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
