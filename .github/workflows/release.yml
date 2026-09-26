@@ -63,6 +63,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      # `tauri build` runs `pnpm build` (vue-tsc + vite) itself via
+      # beforeBuildCommand, but an explicit build here fails fast on
+      # frontend errors with clearer logs than the bundler's output.
+      - run: pnpm exec vite build
       - name: Build Tauri bundles
         run: pnpm exec tauri build
       - uses: actions/upload-artifact@v4

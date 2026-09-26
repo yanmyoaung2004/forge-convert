@@ -10,6 +10,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Tauri's build script (tauri_build::build → generate_context!) requires
+      # apps/desktop/dist to exist. It is git-ignored by design, so the
+      # frontend must be built before any cargo command that compiles
+      # forgeconvert_desktop (clippy/test included — --workspace hits it).
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/desktop
+      - run: pnpm exec vite build
+        working-directory: apps/desktop
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
