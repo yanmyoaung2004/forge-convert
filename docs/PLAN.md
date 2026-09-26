@@ -180,4 +180,77 @@ logging + docs + boundaries + fmt/lint/tests + no leak + no gratuitous dep.
 | thiserror 2.0 | structured errors | zero-boilerplate enums | string errors (banned) | MIT OR Apache-2.0 |
 | tracing 0.1 + subscriber | structured logs w/ job spans | std for instrumented apps | log+env_logger (weaker spans) | MIT |
 | tauri 2.11 | desktop shell | small bins, Rust backend | Electron (heavy) | Apache-2.0 OR MIT |
-| hayro/pdfium (later) | PDF→image | pure vs fidelity — decide w/ license check | mupdf (AGPL✗), poppler (stale✗) | TBD w/ check |
+| kamadak-exif 0.6 (slice 3) | EXIF orientation read (auto-rotate) | pure-Rust, maintained, minimal | `rexif` (less maintained), `exif` crate (heavier API) | MIT |
+
+## v0.2.0 — Installers work, batch matches convert, photos come out right, UI doesn't freeze
+
+Theme: make v0.1.0's promises real. No new formats, no renderer decision (spike only, ship v0.3.0).
+Order is load-bearing: slice 1 unblocks the release pipeline; slices 2–4 are independent features.
+Each slice: code + tests + `fmt --check` + `clippy -D warnings` + `test --workspace` green, one commit.
+
+### Slice 1 — Desktop build goes green (P0, unblocks everything)
+
+- Commit `tauri-plugin-opener = { workspace = true }` in `apps/desktop/src-tauri/Cargo.toml`
+  (staged but never committed; the Tauri CLI keeps rewriting the adjacent
+  `tauri-build = { version = "2.6", features = [] }` line — revert that hunk, keep ours).
+- Resolve `opener:default` vs `opener:allow-reveal-item-in-dir`: the committed capability
+  lists `opener:default`, but local builds only resolved after switching to the explicit
+  `opener:allow-reveal-item-in-dir`. Verify against the vendored
+  `tauri-plugin-opener-2.5.5/permissions/` ACL manifest, pick the form that builds clean,
+  commit it, and never touch the manifest again without re-verifying.
+- Acceptance: `cargo check -p forgeconvert_desktop --offline` green from a clean worktree;
+  `tauri dev` launches the window with no permission error; `Cargo.lock` committed with the
+  opener tree (that's the +461-line `f20c59c` lesson: lockfile churn is expected, commit it).
+
+### Slice 2 — Batch flag parity with convert
+
+- Today `batch` takes only `--quality`; `convert` has the full surface
+  (`--width/--height/--fit/--fill/--filter/--upscale/--png-level/--webp-lossless/--strip-metadata/--on-collision`).
+- Reuse the existing `parse_resize` / `parse_compression` helpers: extract them from the
+  `convert` arm into shared `fn`s (or a `CommonConvertArgs` struct), wire identical flags
+  onto `Batch`, thread through `convert_one_sync`.
+- Precedence and validation stay identical (explicit `quality` vs `Compression` rules).
+- Tests: unit tests for shared parsers (bad `WIDTHxHEIGHT`, bad PNG level, lossless conflict);
+  integration: batch over mixed fixtures with `--fit` + `--png-level` asserts per-file dims.
+- Acceptance: `batch --help` shows the same resize/compression flags; a 3-file batch with
+  `--fit 320x240` produces exactly 320x240-bounded outputs.
+
+### Slice 3 — EXIF auto-rotate + metadata Preserve honesty
+
+- Problem (verified gap): phone photos come out rotated (EXIF orientation ignored), and
+  `Preserve` is a lie — re-encode already strips most metadata silently.
+- Decoder: read EXIF orientation (pure-Rust crate, new dep justified in the table below)
+  and apply the lossless transform (rotate/flip) during `canonicalize`, before any resize.
+  Orientation 1 = no-op. Malformed EXIF → ignore + proceed (never fail the conversion).
+- Encoder honesty: document that re-encode strips metadata by default; `Preserve` keeps
+  what the target format round-trips (PNG text, JPEG EXIF via future work) and reports
+  what was dropped where measurable. No silent claims.
+- Tests: rotated-EXIF fixture decodes to upright dims; malformed EXIF doesn't fail;
+  `info` reports orientation when present.
+- Acceptance: a portrait phone JPEG converts to portrait output without flags.
+
+### Slice 4 — Desktop: drag-drop, cancel, progress, savings
+
+- Backend already supports it: orchestrator checks `cancel` between stages, batch reports
+  per-file + aggregate progress, CLI prints before/after + % saved. The UI just doesn't
+  expose any of it (picker-only, blocking convert, no sizes).
+- Drag-drop: Tauri window file-drop events → append to `files` (same dedup + `inspectAll`
+  path as picker). Guard: filter non-image extensions early, surface count of skipped.
+- Cancel: `CancelFlag` per conversion, `cancel_job`-style command or shared atomic;
+  Convert button becomes Cancel while `busy`; engine returns `Cancelled`, UI reports cleanly.
+- Progress: stream per-file progress to the UI (Tauri events or polling `get_job_status`
+  shape); at minimum a determinate bar (n/m files) instead of the static "Converting…" text.
+- Savings: after convert, show per-file before → after bytes + % saved + dims (same data
+  the CLI prints; needs output sizes — extend `ConvertDone` or follow-up `get_file_info`).
+- Acceptance: drop 3 files → convert → cancel mid-run leaves clean state; completed run
+  shows per-file sizes + savings; HMR screenshot proves layout.
+
+### Slice 5 — Green CI + tag v0.2.0 with installers
+
+- Full gates: `cargo fmt --check` + `clippy -D warnings` + `test --workspace` +
+  `vue-tsc --noEmit` + `vite build` green locally, then push.
+- Watch `ci` green on main, then `git tag v0.2.0 && git push origin v0.2.0`.
+- `release` must go CLI matrix → `desktop-windows` (this time with bundles) → `publish`.
+- Verify: 3 CLI assets + MSI + `-setup.exe` all `uploaded`; spot-download the Windows exe,
+  run `--help` (exit 0). Update README download table to v0.2.0 links.
+- Non-goal: PDF renderer ships v0.3.0 (timebox the hayro vs pdfium spike separately).
