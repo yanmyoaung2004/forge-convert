@@ -56,19 +56,19 @@ pnpm --dir dev/apps/desktop exec vite build
 pnpm --dir dev/apps/desktop exec tauri dev
 ```
 
-## [Download — v0.1.0](https://github.com/yanmyoaung2004/forge-convert/releases/tag/v0.1.0)
+## [Download — v0.2.0](https://github.com/yanmyoaung2004/forge-convert/releases/tag/v0.2.0)
 
 | Asset | What | How to run |
 |---|---|---|
-| [forgeconvert-windows-x86_64.exe](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.1.0/forgeconvert-windows-x86_64.exe) | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
-| [forgeconvert-linux-x86_64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.1.0/forgeconvert-linux-x86_64) | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
-| [forgeconvert-macos-aarch64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.1.0/forgeconvert-macos-aarch64) | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
+| [forgeconvert-windows-x86_64.exe](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.2.0/forgeconvert-windows-x86_64.exe) | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
+| [forgeconvert-linux-x86_64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.2.0/forgeconvert-linux-x86_64) | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
+| [forgeconvert-macos-aarch64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.2.0/forgeconvert-macos-aarch64) | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
+| `ForgeConvert_0.2.0_x64_en-US.msi` | Desktop installer | Double-click (per-machine install) |
+| `ForgeConvert_0.2.0_x64-setup.exe` | Desktop installer | Double-click (NSIS wizard) |
 
-> Desktop installers (MSI/NSIS) didn't make v0.1.0 — the `desktop-windows` CI job failed on the known `opener:default` permission crash. Tracked for v0.2.0.
+> v0.2.0: installers work (opener permission fixed), `batch` matches `convert` flags, phone photos auto-rotate via EXIF, desktop gains drag-drop + cancel + progress + per-file savings. PDF → image still honest `Unsupported` (renderer decision ships v0.3.0).
 
-> v0.1.0 is the first public snapshot: CLI is fully working; desktop UI converts via the same engine; PDF → image returns honest `Unsupported` until a renderer qualifies (see `dev/docs/adr/009-pdf-subsystem.md`).
-
-Cutting the next release (maintainers): `git tag v0.2.0 && git push origin v0.2.0` — CI rebuilds everything above automatically.
+Cutting the next release (maintainers): `git tag v0.3.0 && git push origin v0.3.0` — CI rebuilds everything above automatically.
 ## Architecture
 
 Clean layered + hexagonal (ports & adapters), dependencies point inward:
