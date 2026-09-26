@@ -15,6 +15,7 @@ pub fn run() {
             commands::get_format_capabilities,
             commands::get_file_info,
             commands::convert_image,
+            commands::cancel_convert,
             commands::convert_images_to_pdf,
             commands::list_presets,
             commands::get_history,

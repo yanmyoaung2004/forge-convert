@@ -6,16 +6,33 @@
 //! progress streams through events in a later iteration).
 
 use std::path::PathBuf;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use forge_core::{
     ConversionOptions, ConversionRequest, FileSystem as _, ForgeError, ImageDecoder as _,
-    ImageFormat, JobStatus, MetadataPolicy, NeverCancel, OutputTarget, PageRange, PdfWriter as _,
-    Preset,
+    ImageFormat, JobStatus, MetadataPolicy, OutputTarget, PageRange, PdfWriter as _, Preset,
 };
-use forge_engine::{EngineDeps, NullSink, Orchestrator, StdFileSystem};
+use forge_engine::{CancelRegistry, EngineDeps, NullSink, Orchestrator, StdFileSystem};
 use forge_image::{ForgeImageDecoder, ForgeImageEncoder, ResizeStep};
 use forge_pdf::ForgePdfWriter;
 use serde::{Deserialize, Serialize};
+
+/// Process-wide cancel registry: `convert_image` registers each run,
+/// `cancel_convert` aborts it. Keyed by an internal id (single-flight UI
+/// keeps at most one live conversion; stale entries are removed on settle).
+static CANCELS: LazyLock<CancelRegistry> = LazyLock::new(CancelRegistry::new);
+
+/// The single in-flight conversion id (None when idle).
+static CURRENT_JOB: LazyLock<Mutex<Option<forge_core::JobId>>> = LazyLock::new(|| Mutex::new(None));
+
+/// `CancelToken` adapter over a shared `CancelFlag`.
+struct Cancellable(Arc<forge_engine::CancelFlag>);
+
+impl forge_core::CancelToken for Cancellable {
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+}
 
 /// JSON-safe error shape (variant name + message; never internals).
 #[derive(Debug, Serialize)]
@@ -181,6 +198,16 @@ pub(crate) struct ConvertDone {
     outputs: Vec<String>,
     skipped: Vec<String>,
     failures: Vec<String>,
+    /// Parallel to `outputs`: input bytes, output bytes per file.
+    /// UIs compute % saved without a second round-trip.
+    sizes: Vec<FileSizes>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FileSizes {
+    output: String,
+    input_bytes: u64,
+    output_bytes: u64,
 }
 
 fn parse_format(raw: &str) -> Result<ImageFormat, CommandError> {
@@ -395,21 +422,61 @@ pub fn convert_image(args: ConvertArgs) -> CommandResult<ConvertDone> {
         transforms: &transforms,
         fs: &fs,
     });
+    // Register a cancel flag so `cancel_convert` can abort mid-run.
+    // Single-file converts finish fast, so cancellation usually lands
+    // between files of a multi-file request (orchestrator checks per file).
+    let job_id = forge_core::JobId::generate();
+    let cancel = CANCELS.register(&job_id);
+    *CURRENT_JOB.lock().expect("current job lock") = Some(job_id.clone());
     let result = orchestrator
-        .run(request, &NullSink, &NeverCancel)
-        .map_err(CommandError::from)?;
+        .run(request, &NullSink, &Cancellable(cancel))
+        .map_err(|error| {
+            CANCELS.remove(&job_id);
+            *CURRENT_JOB.lock().expect("current job lock") = None;
+            CommandError::from(error)
+        })?;
+    CANCELS.remove(&job_id);
+    *CURRENT_JOB.lock().expect("current job lock") = None;
+    let input_bytes: std::collections::HashMap<String, u64> = args
+        .inputs
+        .iter()
+        .map(|input| {
+            let bytes = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+            let stem = PathBuf::from(input)
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            (stem, bytes)
+        })
+        .collect();
+    let outputs: Vec<String> = result
+        .outputs
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    let sizes: Vec<FileSizes> = result
+        .outputs
+        .iter()
+        .map(|p| {
+            let output_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            let stem = p.file_stem().and_then(|n| n.to_str()).unwrap_or_default();
+            FileSizes {
+                output: p.display().to_string(),
+                input_bytes: input_bytes.get(stem).copied().unwrap_or(0),
+                output_bytes,
+            }
+        })
+        .collect();
     Ok(ConvertDone {
-        outputs: result
-            .outputs
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect(),
+        outputs,
         skipped: result
             .skipped
             .iter()
             .map(|p| p.display().to_string())
             .collect(),
         failures: result.failures.clone(),
+        sizes,
     })
 }
 
@@ -523,6 +590,19 @@ pub fn get_history(limit: Option<usize>) -> CommandResult<Vec<HistoryRow>> {
             duration_ms: entry.duration_ms,
         })
         .collect())
+}
+
+/// `cancel_convert` — abort the in-flight conversion, if any.
+/// Returns `"cancelled"` when a live job was signalled, `"idle"` otherwise.
+/// The running `convert_image` settles with `Cancelled`; the UI treats that
+/// like a clean stop, not a failure.
+#[tauri::command]
+pub fn cancel_convert() -> String {
+    let current = CURRENT_JOB.lock().expect("current job lock").clone();
+    match current {
+        Some(id) if CANCELS.cancel(&id) => "cancelled".to_string(),
+        _ => "idle".to_string(),
+    }
 }
 
 /// History DB location mirrors the CLI (shared local history).

@@ -5,11 +5,13 @@
 //! `apps/*` compose these pieces with real implementations.
 
 mod batch;
+mod cancel_registry;
 mod filesystem;
 mod naming;
 mod orchestrator;
 
 pub use batch::{run_batch, split_request, BatchConfig, BatchReport, CancelFlag, NullSink};
+pub use cancel_registry::CancelRegistry;
 pub use filesystem::StdFileSystem;
 pub use naming::resolve_output;
 pub use orchestrator::{EngineDeps, Orchestrator};

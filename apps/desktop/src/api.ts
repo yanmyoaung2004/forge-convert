@@ -28,6 +28,13 @@ export interface ConvertDone {
   outputs: string[];
   skipped: string[];
   failures: string[];
+  sizes: FileSizes[];
+}
+
+export interface FileSizes {
+  output: string;
+  input_bytes: number;
+  output_bytes: number;
 }
 
 export interface PresetInfo {
@@ -145,4 +152,5 @@ export const api = {
   presets: () => invoke<PresetInfo[]>("list_presets"),
   history: (limit?: number) =>
     invoke<HistoryRow[]>("get_history", { limit: limit ?? null }),
+  cancel: () => invoke<string>("cancel_convert"),
 };

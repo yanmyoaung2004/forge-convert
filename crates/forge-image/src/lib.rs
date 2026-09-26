@@ -738,7 +738,10 @@ mod tests {
         assert_eq!(exif_orientation(b"not-a-jpeg"), None);
         assert_eq!(exif_orientation(&[0xFF, 0xD8, 0xFF, 0xD9]), None);
         // Truncated EXIF payload → parse fails → None, never panics.
-        assert_eq!(exif_orientation(&[0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x08, 0x45, 0x78]), None);
+        assert_eq!(
+            exif_orientation(&[0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x08, 0x45, 0x78]),
+            None
+        );
         // Orientation value 0 / 9 out of range → None.
         assert_eq!(exif_orientation(&jpeg_with_orientation(0)), None);
         assert_eq!(exif_orientation(&jpeg_with_orientation(9)), None);

@@ -32,14 +32,17 @@ const pngLevel = ref(6);
 const webpLossless = ref(false);
 const outputDir = ref<string | null>(null);
 const busy = ref(false);
+const cancelling = ref(false);
 const progress = ref<string | null>(null);
+const progressFraction = ref(0);
 const result = ref<ConvertDone | null>(null);
 const error = ref<string | null>(null);
 const backendError = ref<string | null>(null);
 const history = ref<HistoryRow[]>([]);
 const tab = ref<"convert" | "history">("convert");
 const revealFailed = ref<string | null>(null);
-
+const dragActive = ref(false);
+let dragDepth = 0;
 const encodable = computed(() => formats.value.filter((f) => f.can_encode));
 const backendReady = computed(() => formats.value.length > 0);
 const canConvert = computed(
@@ -80,6 +83,59 @@ async function addFiles() {
     if (!files.value.includes(path)) files.value.push(path);
   }
   await inspectAll();
+}
+
+const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "pdf"]);
+
+function extOf(path: string): string {
+  return path.split(".").pop()?.toLowerCase() ?? "";
+}
+
+async function addPaths(paths: string[]) {
+  let skipped = 0;
+  for (const path of paths) {
+    if (!IMAGE_EXTS.has(extOf(path))) {
+      skipped += 1;
+      continue;
+    }
+    if (!files.value.includes(path)) files.value.push(path);
+  }
+  if (skipped > 0) {
+    error.value = `${skipped} dropped file${skipped === 1 ? "" : "s"} skipped (not an image/PDF)`;
+  }
+  await inspectAll();
+}
+
+function onDragEnter(event: DragEvent) {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  dragDepth += 1;
+  dragActive.value = true;
+}
+
+function onDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dragActive.value = false;
+}
+
+function onDragOver(event: DragEvent) {
+  if (dragActive.value) event.preventDefault();
+}
+
+async function onDrop(event: DragEvent) {
+  event.preventDefault();
+  dragDepth = 0;
+  dragActive.value = false;
+  const dropped = event.dataTransfer?.files;
+  if (!dropped || dropped.length === 0) return;
+  // Tauri serves file drops with filesystem paths available via getCurrentWindow
+  // drag-drop events; the DOM File list carries names only in some contexts, so
+  // prefer the Tauri window event below. This handler covers browser-mode drops.
+  const paths: string[] = [];
+  for (const file of dropped) {
+    const full = (file as unknown as { path?: string }).path;
+    paths.push(full ?? file.name);
+  }
+  await addPaths(paths);
 }
 
 async function inspectAll() {
@@ -154,6 +210,36 @@ async function reveal(path: string) {
   }
 }
 
+async function cancelConvert() {
+  if (!busy.value || cancelling.value) return;
+  cancelling.value = true;
+  try {
+    await api.cancel();
+  } catch {
+    // Convert is a single round-trip today: cancellation lands when the
+    // backend runs conversions as cancellable jobs (slice 4, phase 2).
+    // Until then this is a no-op that keeps the button honest.
+  } finally {
+    cancelling.value = false;
+  }
+}
+
+function savingsText(inputBytes: number, outputBytes: number): string {
+  if (inputBytes <= 0) return formatBytes(outputBytes);
+  const saved = ((inputBytes - outputBytes) / inputBytes) * 100;
+  return `${formatBytes(inputBytes)} → ${formatBytes(outputBytes)} · ${saved.toFixed(1)}% saved`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sizeFor(output: string): { input_bytes: number; output_bytes: number } | undefined {
+  return result.value?.sizes.find((s) => s.output === output);
+}
+
 function applyPreset(key: string) {
   const preset = presets.value.find((p) => p.key === key);
   if (!preset) return;
@@ -161,7 +247,27 @@ function applyPreset(key: string) {
   quality.value = preset.quality;
 }
 
-onMounted(() => void refresh());
+onMounted(() => {
+  void refresh();
+  // Native OS file drops (Tauri window events carry real filesystem paths).
+  // No-op in plain browser mode — the DOM dropzone below covers that.
+  void import("@tauri-apps/api/window")
+    .then(async ({ getCurrentWindow }) => {
+      await getCurrentWindow().onDragDropEvent((event) => {
+        if (event.payload.type === "enter" || event.payload.type === "over") {
+          dragActive.value = true;
+        } else if (event.payload.type === "drop") {
+          dragActive.value = false;
+          dragDepth = 0;
+          void addPaths(event.payload.paths);
+        } else {
+          dragActive.value = false;
+          dragDepth = 0;
+        }
+      });
+    })
+    .catch(() => undefined);
+});
 </script>
 
 <template>
@@ -187,7 +293,15 @@ onMounted(() => void refresh());
       <button class="btn ghost" @click="refresh">Retry</button>
     </section>
 
-    <section v-if="tab === 'convert' && !backendError" class="panel">
+    <section
+      v-if="tab === 'convert' && !backendError"
+      class="panel"
+      :class="{ dragover: dragActive }"
+      @dragenter="onDragEnter"
+      @dragleave="onDragLeave"
+      @dragover="onDragOver"
+      @drop="onDrop"
+    >
       <div class="drop-row">
         <button class="btn" @click="addFiles">＋ Choose files</button>
         <button class="btn ghost" :disabled="files.length === 0" @click="files = []">Clear</button>
@@ -195,7 +309,9 @@ onMounted(() => void refresh());
           {{ outputDir ? `📁 ${outputDir}` : "📁 Output folder (optional)" }}
         </button>
       </div>
-
+      <div v-if="dragActive" class="drop-overlay" aria-hidden="true">
+        <div class="drop-hint">Drop images / PDFs to add them</div>
+      </div>
       <ul v-if="files.length" class="files">
         <li v-for="info in infos" :key="info.name" class="file-card">
           <div class="file-badge">{{ info.format }}</div>
@@ -298,10 +414,18 @@ onMounted(() => void refresh());
         </button>
       </div>
 
-      <button class="primary" :disabled="!canConvert" @click="convert">
-        <span v-if="busy" class="spinner" aria-hidden="true" />{{ busy ? "Converting…" : `Convert ${files.length || ""}`.trim() }}
-      </button>
-      <p v-if="progress" class="progress" role="status">{{ progress }}</p>
+      <div class="convert-row">
+        <button class="primary grow" :disabled="!canConvert" @click="convert">
+          <span v-if="busy" class="spinner" aria-hidden="true" />{{ busy ? "Converting…" : `Convert ${files.length || ""}`.trim() }}
+        </button>
+        <button v-if="busy" class="btn danger" @click="cancelConvert" :disabled="cancelling">
+          {{ cancelling ? "Cancelling…" : "Cancel" }}
+        </button>
+      </div>
+      <div v-if="busy" class="progress-wrap" role="status">
+        <div class="progress-bar"><div class="progress-fill" :style="{ width: `${Math.round(progressFraction * 100)}%` }" /></div>
+        <p class="progress">{{ progress }}</p>
+      </div>
 
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <div v-if="result" class="result card">
@@ -313,6 +437,7 @@ onMounted(() => void refresh());
             <button class="link" @click="reveal(o)" :title="`Reveal ${fileName(o)} in folder`">
               📄 {{ fileName(o) }}
             </button>
+            <span v-if="sizeFor(o)" class="dim savings">{{ savingsText(sizeFor(o)!.input_bytes, sizeFor(o)!.output_bytes) }}</span>
             <button class="link dim folder-link" @click="reveal(o)" :title="`Open ${parentDir(o)}`">
               {{ parentDir(o) }} ⧉
             </button>
@@ -633,7 +758,6 @@ header h1 {
 }
 .primary {
   margin-top: 1.1rem;
-  width: 100%;
   border: 0;
   border-radius: 12px;
   padding: 0.85rem;
@@ -651,6 +775,55 @@ header h1 {
 .primary:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.convert-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+}
+.convert-row .grow {
+  flex: 1;
+  margin-top: 0;
+}
+.btn.danger {
+  background: white;
+  color: var(--danger);
+  border-color: var(--danger);
+  font-weight: 700;
+}
+.progress-wrap {
+  margin-top: 0.75rem;
+}
+.progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #eee5d8;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), var(--brand-deep));
+  transition: width 0.2s ease;
+}
+.panel.dragover {
+  outline: 2px dashed var(--brand);
+  outline-offset: 4px;
+}
+.drop-overlay {
+  margin-top: 0.75rem;
+  border: 1.5px dashed var(--brand);
+  border-radius: var(--radius);
+  background: var(--brand-soft);
+  padding: 1.25rem;
+  text-align: center;
+}
+.drop-hint {
+  font-weight: 700;
+  color: var(--brand-deep);
+}
+.savings {
+  font-size: 0.82rem;
 }
 .spinner {
   width: 1rem;

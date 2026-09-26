@@ -325,8 +325,20 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
         } => {
             let target = to.to_image_format();
             let options = shared_options(
-                target, quality, width, height, fit, fill, max_width, max_height, filter, upscale,
-                png_level, webp_lossless, strip_metadata, on_collision,
+                target,
+                quality,
+                width,
+                height,
+                fit,
+                fill,
+                max_width,
+                max_height,
+                filter,
+                upscale,
+                png_level,
+                webp_lossless,
+                strip_metadata,
+                on_collision,
             )?;
             let output_target = match output {
                 Some(path) if is_explicit_file(&path) => OutputTarget::File(path),
@@ -411,8 +423,20 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let target = to.to_image_format();
             // Same builder as `convert` — parity by construction.
             let template = shared_options(
-                target, quality, width, height, fit, fill, max_width, max_height, filter, upscale,
-                png_level, webp_lossless, strip_metadata, on_collision,
+                target,
+                quality,
+                width,
+                height,
+                fit,
+                fill,
+                max_width,
+                max_height,
+                filter,
+                upscale,
+                png_level,
+                webp_lossless,
+                strip_metadata,
+                on_collision,
             )?;
             let out_dir = output_dir.unwrap_or_else(|| dir.join("converted"));
             let entries = std::fs::read_dir(&dir).map_err(|e| {
