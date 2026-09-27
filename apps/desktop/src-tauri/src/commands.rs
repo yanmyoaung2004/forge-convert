@@ -14,7 +14,7 @@ use forge_core::{
 };
 use forge_engine::{CancelRegistry, EngineDeps, NullSink, Orchestrator, StdFileSystem};
 use forge_image::{ForgeImageDecoder, ForgeImageEncoder, ResizeStep};
-use forge_pdf::ForgePdfWriter;
+use forge_pdf::{ForgePdfWriter, LopdfSplitter, LopdfToDocx};
 use serde::{Deserialize, Serialize};
 
 /// Process-wide cancel registry: `convert_image` registers each run,
@@ -125,6 +125,8 @@ pub(crate) struct FileInfo {
     pixel: Option<String>,
     alpha: bool,
     size_bytes: u64,
+    /// PDF page count (None for images / unreadable PDFs).
+    pages: Option<u32>,
 }
 
 #[tauri::command]
@@ -143,7 +145,9 @@ pub fn get_file_info(path: String) -> CommandResult<FileInfo> {
         .unwrap_or_default()
         .to_string();
     if format == ImageFormat::Pdf {
+        use forge_core::PdfSplitter as _;
         let descriptor = format.descriptor();
+        let pages = LopdfSplitter.page_count(&bytes).ok();
         return Ok(FileInfo {
             name,
             format: descriptor.name.to_string(),
@@ -153,6 +157,7 @@ pub fn get_file_info(path: String) -> CommandResult<FileInfo> {
             pixel: None,
             alpha: false,
             size_bytes,
+            pages,
         });
     }
     let decoder = ForgeImageDecoder;
@@ -169,6 +174,7 @@ pub fn get_file_info(path: String) -> CommandResult<FileInfo> {
         pixel: Some(format!("{:?}", image.pixel_format)),
         alpha: image.has_alpha,
         size_bytes,
+        pages: None,
     })
 }
 
@@ -351,6 +357,12 @@ pub fn convert_image(args: ConvertArgs) -> CommandResult<ConvertDone> {
     if target == ImageFormat::Pdf {
         return Err(ForgeError::InvalidConfiguration(
             "use convert_images_to_pdf for PDF output".to_string(),
+        )
+        .into());
+    }
+    if target == ImageFormat::Docx {
+        return Err(ForgeError::InvalidConfiguration(
+            "use pdf_to_docx for Word output (PDF input only)".to_string(),
         )
         .into());
     }
@@ -537,6 +549,119 @@ pub fn convert_images_to_pdf(args: ImagesToPdfArgs) -> CommandResult<String> {
     fs.write_atomic(&output, &bytes)
         .map_err(CommandError::from)?;
     Ok(output.display().to_string())
+}
+
+/// `split_pdf` — keep `pages` (same `1-3` / `1,3,5-7` grammar as CLI).
+/// Default output: `{stem}-split.pdf` beside input.
+#[derive(Debug, Deserialize)]
+pub(crate) struct SplitPdfArgs {
+    input: String,
+    pages: String,
+    output: Option<String>,
+    on_collision: Option<String>,
+}
+
+#[tauri::command]
+pub fn split_pdf(args: SplitPdfArgs) -> CommandResult<String> {
+    use forge_core::PdfSplitter as _;
+    let input = PathBuf::from(&args.input);
+    let fs = StdFileSystem;
+    let bytes = fs.read(&input).map_err(CommandError::from)?;
+    let detected =
+        forge_core::detect_input_format(&input, Some(&bytes)).map_err(CommandError::from)?;
+    if detected != ImageFormat::Pdf {
+        return Err(ForgeError::UnsupportedFormat(format!(
+            "split_pdf needs a PDF input, got {}",
+            detected.mime_type()
+        ))
+        .into());
+    }
+    let range = PageRange::parse(&args.pages).map_err(CommandError::from)?;
+    let out_bytes = LopdfSplitter
+        .split(&bytes, &range)
+        .map_err(CommandError::from)?;
+    let candidate = match args.output {
+        Some(out) => PathBuf::from(out),
+        None => {
+            let stem = forge_core::canonical_stem_of(&input);
+            let dir = input
+                .parent()
+                .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
+            dir.join(format!("{stem}-split.pdf"))
+        }
+    };
+    let policy = parse_collision(args.on_collision.as_deref())?;
+    let target = forge_engine::apply_collision(&candidate, policy).map_err(CommandError::from)?;
+    let Some(target) = target else {
+        return Err(ForgeError::OutputExists(candidate).into());
+    };
+    fs.write_atomic(&target, &out_bytes)
+        .map_err(CommandError::from)?;
+    Ok(target.display().to_string())
+}
+
+/// `pdf_to_docx` — export PDF text to Word (.docx, text-only).
+/// Default output: `{stem}.docx` beside input; `pages` omitted = all pages.
+#[derive(Debug, Deserialize)]
+pub(crate) struct PdfToDocxArgs {
+    input: String,
+    pages: Option<String>,
+    output: Option<String>,
+    on_collision: Option<String>,
+}
+
+#[tauri::command]
+pub fn pdf_to_docx(args: PdfToDocxArgs) -> CommandResult<String> {
+    use forge_core::PdfToDocx as _;
+    let input = PathBuf::from(&args.input);
+    let fs = StdFileSystem;
+    let bytes = fs.read(&input).map_err(CommandError::from)?;
+    let detected =
+        forge_core::detect_input_format(&input, Some(&bytes)).map_err(CommandError::from)?;
+    if detected != ImageFormat::Pdf {
+        return Err(ForgeError::UnsupportedFormat(format!(
+            "pdf_to_docx needs a PDF input, got {}",
+            detected.mime_type()
+        ))
+        .into());
+    }
+    let range = args
+        .pages
+        .as_deref()
+        .map(PageRange::parse)
+        .transpose()
+        .map_err(CommandError::from)?;
+    let out_bytes = LopdfToDocx
+        .convert(&bytes, range.as_ref())
+        .map_err(CommandError::from)?;
+    let candidate = match args.output {
+        Some(out) => PathBuf::from(out),
+        None => {
+            let stem = forge_core::canonical_stem_of(&input);
+            let dir = input
+                .parent()
+                .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
+            dir.join(format!("{stem}.docx"))
+        }
+    };
+    let policy = parse_collision(args.on_collision.as_deref())?;
+    let target = forge_engine::apply_collision(&candidate, policy).map_err(CommandError::from)?;
+    let Some(target) = target else {
+        return Err(ForgeError::OutputExists(candidate).into());
+    };
+    fs.write_atomic(&target, &out_bytes)
+        .map_err(CommandError::from)?;
+    Ok(target.display().to_string())
+}
+
+/// `pdf_page_count` — total pages (drives the desktop page-count line).
+#[tauri::command]
+pub fn pdf_page_count(input: String) -> CommandResult<u32> {
+    use forge_core::PdfSplitter as _;
+    let path = PathBuf::from(&input);
+    let fs = StdFileSystem;
+    let bytes = fs.read(&path).map_err(CommandError::from)?;
+    LopdfSplitter.page_count(&bytes).map_err(CommandError::from)
 }
 
 /// `list_presets` — built-in preset catalogue for the UI pickers.

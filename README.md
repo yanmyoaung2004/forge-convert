@@ -13,10 +13,11 @@ Stack: **Tauri 2 + Rust core + Vue 3 + TypeScript + Vite + SQLite** (history/set
 - **Compression**: PNG level 0–9, JPEG/WebP quality 1–100, WebP lossless
 - **Optimize presets**: `web`, `hq-jpeg`, `small-jpeg`, `lossless-png`, `webp` (config, not branches)
 - **PDF**: images → PDF (A4/Letter, portrait/landscape, fit/fill); PDF → image stubbed as honest `Unsupported` until a renderer qualifies
+- **PDF split**: `pdf-split doc.pdf --pages 2-5` keeps pages 2–5 (`{stem}-split.pdf` default, same `1,3,5-7` grammar as `render --pages`)
+- **PDF → Word**: `pdf-to-docx doc.pdf [--pages 1-3]` exports text to .docx (text-only, page breaks; scanned pages get a marker, never an error)
 - **Batch**: bounded worker pool, per-file + aggregate progress, exact ok/fail/skip counts
 - **History**: SQLite-backed `history` command (metadata only)
-- **Desktop UI**: Tauri shell + Vue UI (Convert/History tabs, preset chips, clickable reveal-in-folder results)
-
+- **Desktop UI**: Tauri shell + Vue UI (Convert/PDF/History tabs, preset chips, clickable reveal-in-folder results)
 ## Quick start
 
 The repo root is the checkout root (`forge-convert/`); all commands run from there.
@@ -31,6 +32,8 @@ cargo build -p forgeconvert
 ./target/debug/forgeconvert.exe convert scan.jpg --to png --png-level 9
 ./target/debug/forgeconvert.exe batch ./images --to webp --jobs 4
 ./target/debug/forgeconvert.exe pdf a.png b.jpg --output doc.pdf
+./target/debug/forgeconvert.exe pdf-split doc.pdf --pages 2-5
+./target/debug/forgeconvert.exe pdf-to-docx doc.pdf --pages 1-3
 ./target/debug/forgeconvert.exe optimize logo.png --preset webp
 ./target/debug/forgeconvert.exe history --limit 10
 ```

@@ -9,4 +9,8 @@ rust-version.workspace = true
 forge-core = { path = "../forge-core" }
 thiserror.workspace = true
 printpdf.workspace = true
-# Renderer stays a stub (Unsupported) until qualified (ADR 009).
+# Page ops (split/count/extract) need printpdf's engine directly (ADR 009):
+# printpdf 0.12 already depends on lopdf 0.44 — no new native code.
+lopdf.workspace = true
+# PDF → .docx writer (pure-Rust OOXML, builder API; see dep table in PLAN.md).
+docx-rs.workspace = true

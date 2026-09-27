@@ -22,8 +22,9 @@ export interface FileInfo {
   pixel: string | null;
   alpha: boolean;
   size_bytes: number;
+  /** PDF page count (null for images / unreadable PDFs). */
+  pages: number | null;
 }
-
 export interface ConvertDone {
   outputs: string[];
   skipped: string[];
@@ -149,6 +150,28 @@ export const api = {
         landscape: args.landscape ?? null,
       },
     }),
+  /** Split PDF pages (same `1-3` / `1,3,5-7` grammar as CLI). */
+  splitPdf: (args: { input: string; pages: string; output?: string }) =>
+    invoke<string>("split_pdf", {
+      args: {
+        input: args.input,
+        pages: args.pages,
+        output: args.output ?? null,
+        on_collision: "rename",
+      },
+    }),
+  /** Export PDF text to Word (.docx, text-only). */
+  pdfToDocx: (args: { input: string; pages?: string; output?: string }) =>
+    invoke<string>("pdf_to_docx", {
+      args: {
+        input: args.input,
+        pages: args.pages ?? null,
+        output: args.output ?? null,
+        on_collision: "rename",
+      },
+    }),
+  /** Total PDF pages (drives the desktop page-count line). */
+  pdfPageCount: (input: string) => invoke<number>("pdf_page_count", { input }),
   presets: () => invoke<PresetInfo[]>("list_presets"),
   history: (limit?: number) =>
     invoke<HistoryRow[]>("get_history", { limit: limit ?? null }),

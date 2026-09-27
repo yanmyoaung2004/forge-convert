@@ -39,7 +39,13 @@ const result = ref<ConvertDone | null>(null);
 const error = ref<string | null>(null);
 const backendError = ref<string | null>(null);
 const history = ref<HistoryRow[]>([]);
-const tab = ref<"convert" | "history">("convert");
+const tab = ref<"convert" | "pdf" | "history">("convert");
+// -- PDF tab state (backend authoritative; TS holds no business logic) -----
+const pdfFile = ref<string | null>(null);
+const pdfPages = ref<number | null>(null);
+const pdfRange = ref("1-2");
+const pdfBusy = ref(false);
+const pdfResult = ref<string | null>(null);
 const revealFailed = ref<string | null>(null);
 const dragActive = ref(false);
 let dragDepth = 0;
@@ -153,6 +159,7 @@ async function inspectAll() {
         pixel: null,
         alpha: false,
         size_bytes: 0,
+        pages: null,
       });
     }
   }
@@ -167,6 +174,52 @@ async function chooseOutputDir() {
   outputDir.value = await pickDirectory();
 }
 
+async function pickPdf() {
+  const picked = await pickFiles();
+  if (!picked || picked.length === 0) return;
+  const pdf = picked.find((p) => extOf(p) === "pdf") ?? picked[0];
+  pdfFile.value = pdf;
+  pdfPages.value = null;
+  pdfResult.value = null;
+  try {
+    pdfPages.value = await api.pdfPageCount(pdf);
+  } catch {
+    pdfPages.value = null;
+  }
+}
+
+async function runPdfSplit() {
+  if (!pdfFile.value || pdfBusy.value) return;
+  pdfBusy.value = true;
+  error.value = null;
+  pdfResult.value = null;
+  try {
+    pdfResult.value = await api.splitPdf({ input: pdfFile.value, pages: pdfRange.value });
+    history.value = await api.history(20);
+  } catch (err) {
+    error.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  } finally {
+    pdfBusy.value = false;
+  }
+}
+
+async function runPdfToDocx() {
+  if (!pdfFile.value || pdfBusy.value) return;
+  pdfBusy.value = true;
+  error.value = null;
+  pdfResult.value = null;
+  try {
+    pdfResult.value = await api.pdfToDocx({
+      input: pdfFile.value,
+      pages: pdfRange.value.trim() ? pdfRange.value : undefined,
+    });
+    history.value = await api.history(20);
+  } catch (err) {
+    error.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  } finally {
+    pdfBusy.value = false;
+  }
+}
 async function convert() {
   if (!canConvert.value) return;
   busy.value = true;
@@ -282,6 +335,7 @@ onMounted(() => {
       </div>
       <nav class="tabs" role="tablist">
         <button :class="{ active: tab === 'convert' }" role="tab" @click="tab = 'convert'">Convert</button>
+        <button :class="{ active: tab === 'pdf' }" role="tab" @click="tab = 'pdf'">PDF</button>
         <button :class="{ active: tab === 'history' }" role="tab" @click="tab = 'history'">History</button>
       </nav>
     </header>
@@ -450,6 +504,45 @@ onMounted(() => {
           <li v-for="f in result.failures" :key="f" class="error">{{ f }}</li>
         </ul>
         <p v-if="revealFailed" class="error">{{ revealFailed }}</p>
+      </div>
+    </section>
+
+    <section v-if="tab === 'pdf' && !backendError" class="panel">
+      <div class="drop-row">
+        <button class="btn" @click="pickPdf">📄 Choose PDF</button>
+        <button class="btn ghost" :disabled="!pdfFile" @click="pdfFile = null; pdfPages = null; pdfResult = null">Clear</button>
+      </div>
+      <div v-if="pdfFile" class="card file-card">
+        <div class="file-badge">PDF</div>
+        <div class="file-meta">
+          <strong>{{ fileName(pdfFile) }}</strong>
+          <span class="dim">{{ pdfPages !== null ? `${pdfPages} pages` : "page count unavailable" }} · {{ pdfFile }}</span>
+        </div>
+      </div>
+      <div v-else class="empty">
+        <div class="empty-icon">📄</div>
+        <p>Pick a PDF to split pages or export to Word (.docx).</p>
+      </div>
+      <div v-if="pdfFile" class="controls card">
+        <label class="field grow">
+          <span>Pages (e.g. 1-3, 1,3,5-7; blank = all for Word)</span>
+          <input v-model="pdfRange" type="text" placeholder="1-2" pattern="[\d\s,\-]+" />
+        </label>
+      </div>
+      <div v-if="pdfFile" class="convert-row">
+        <button class="primary grow" :disabled="pdfBusy || !pdfRange.trim()" @click="runPdfSplit">
+          {{ pdfBusy ? "Splitting…" : "Split PDF" }}
+        </button>
+        <button class="btn grow" :disabled="pdfBusy" @click="runPdfToDocx">
+          {{ pdfBusy ? "Exporting…" : "Export .docx" }}
+        </button>
+      </div>
+      <p v-if="error && tab === 'pdf'" class="error" role="alert">{{ error }}</p>
+      <div v-if="pdfResult" class="result card">
+        <p class="result-head">✅ written</p>
+        <button class="link" @click="reveal(pdfResult)" :title="`Reveal ${fileName(pdfResult)} in folder`">
+          📄 {{ fileName(pdfResult) }}
+        </button>
       </div>
     </section>
 

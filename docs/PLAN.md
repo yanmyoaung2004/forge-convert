@@ -254,3 +254,95 @@ Each slice: code + tests + `fmt --check` + `clippy -D warnings` + `test --worksp
 - Verify: 3 CLI assets + MSI + `-setup.exe` all `uploaded`; spot-download the Windows exe,
   run `--help` (exit 0). Update README download table to v0.2.0 links.
 - Non-goal: PDF renderer ships v0.3.0 (timebox the hayro vs pdfium spike separately).
+
+## v0.3.0 — PDF split (page ranges) + PDF → Word (.docx)
+
+Theme: PDF stops being write-only. Split reuses the `lopdf` already in the
+tree (via `printpdf`); Word export adds text extraction + `docx-rs`.
+Order is load-bearing: core format/ports first, then `forge-pdf`, then
+CLI, then desktop. Each slice: code + tests + `fmt --check` +
+`clippy -D warnings` + `test --workspace` green.
+
+### Slice 0 — Core: `Docx` format + PDF ports (no behavior yet)
+
+- `format.rs`: add `ImageFormat::Docx` (`docx`, MIME
+  `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+  `can_decode: false`, `can_encode: true`). `targets_for(Pdf)` gains `Docx`;
+  images do NOT target `Docx`; `Docx` targets nothing (terminal).
+- `ports.rs`: add `PdfSplitter` (`split(bytes, &PageRange)`,
+  `page_count(bytes)`) and `PdfToDocx` (`convert(bytes, Option<&PageRange>)`)
+  — domain types + `ForgeError` only, `Send + Sync`.
+- `lib.rs`: re-export both traits. Existing `test_extension_roundtrip` covers
+  the new variant by loop; extend `test_capabilities_*` for Pdf→Docx.
+- Exhaustive-match sweep: `forge-image` encoder + `to_image_format` return
+  `UnsupportedFormat` for `Docx` ("use pdf-to-docx path"); CLI batch filter
+  excludes `Docx` like `Pdf`; desktop `convert_image` guard rejects `Docx`.
+- Acceptance: `cargo test -p forge-core` green, no other crate touched.
+
+### Slice 1 — `forge-pdf`: split + text-to-docx adapters
+
+- Deps (justify in table below): `lopdf 0.44` direct (already the
+  `printpdf` engine — ADR 009 foresaw this; no duplication), `docx-rs 0.4`
+  (MIT, pure-Rust OOXML writer, builder API `Docx::new().add_paragraph…`).
+- `LopdfSplitter: PdfSplitter`: `load_mem` → `get_pages` → validate every
+  requested page `<= total` (`InvalidConfiguration`, never panic) →
+  `delete_pages(complement)` (numbers refer to ORIGINAL numbering — verified
+  in `lopdf/src/processor.rs`) → `prune_objects` → `save_to(Vec)`.
+  Errors: load/extract → `PdfReadFailed`, save → `PdfWriteFailed`.
+- `LopdfToDocx: PdfToDocx`: `load_mem` → per-page
+  `extract_text_with_limit(pages, 16 MiB)` (bomb-safe; `MemoryLimitExceeded`
+  → `ResourceLimitExceeded`) → `docx_rs::Docx` one paragraph per non-empty
+  line, `page_break_before` on each page start (not the first) →
+  `build().pack(Cursor)` → `EncodeFailed` on zip errors. Scanned PDFs
+  (no text layer) yield a valid .docx with a `[No extractable text on page N]`
+  marker paragraph — never an empty file, never an error.
+- Tests (no binary fixtures): build multi-page PDFs via
+  `lopdf::creator::create_document_with_texts`; split keeps selected count,
+  rejects out-of-range + garbage bytes; docx output has `PK` magic + page
+  markers. `StubPdfRenderer` untouched (render still `Unsupported`).
+- Acceptance: `cargo test -p forge-pdf` green (≥6 new tests).
+
+### Slice 2 — CLI: `pdf-split` + `pdf-to-docx`
+
+- `pdf-split input.pdf --pages 2-5 [--output out.pdf]
+  [--on-collision rename|replace|skip|fail]`: `PageRange::parse` reuses the
+  `render --pages` grammar (`1-3`, `1,3,5-7`). Default output:
+  `{stem}-split.pdf` beside input (NOT `resolve_output` — that would collide
+  with the input name for Pdf→Pdf). Atomic write via `StdFileSystem`.
+- `pdf-to-docx input.pdf [--pages 1-3] [--output out.docx]
+  [--on-collision …]`: default `{stem}.docx`. Pages omitted = all pages.
+  Output name uses `canonical_stem_of` + `.docx` (never `ImageFormat`
+  extension plumbing — `Docx` ext comes from the variant directly).
+- History: `record_history("pdf-split" | "pdf-to-docx", …, Pdf | Docx, …)`.
+  Exit codes unchanged (`InvalidConfiguration` → 2, …).
+- Acceptance: smoke on a real PDF — split pages 1-2 decodes as PDF magic;
+  docx opens (PK magic); `--pages 99` exits 2.
+
+### Slice 3 — Desktop: PDF tab (split + to-docx + page counts)
+
+- Backend: `split_pdf {input, pages, output?}` and
+  `pdf_to_docx {input, pages?, output?}` commands (same defaults/collisions
+  as CLI, `write_atomic`), registered in `lib.rs`. `FileInfo` gains
+  `pages: Option<u32>` (via `page_count`; `None` for images/unreadable).
+- Frontend (`api.ts` + `App.vue`): tab union becomes
+  `"convert" | "pdf" | "history"`; PDF panel = file pick (PDF only),
+  page-count line, pages textbox, Split + Export-.docx buttons, result row
+  with reveal-in-folder. No business logic in TS — backend authoritative.
+- Acceptance: `vue-tsc --noEmit` + `vite build` green; dropped PDF shows
+  page count; split/docx round-trip reveals a file.
+
+### Slice 4 — Docs, version, gates, push
+
+- ADRs `013-pdf-split-lopdf` + `014-pdf-to-docx` (why direct `lopdf`, why
+  `docx-rs`, why markers for scanned pages, why `Docx` lives in
+  `ImageFormat`). README Features + Quick-start gains both commands.
+- Bump workspace + `tauri.conf.json` + `package.json` `0.2.1 → 0.3.0`.
+- Full gates: `fmt --check` + `clippy -D warnings` + `test --workspace` +
+  `vue-tsc` + `vite build` green → commit → push (no tag; release later).
+- Non-goals: PDF merge/compress/reorder, OCR for scanned pages, PDF render
+  to images (still `Unsupported`), `.doc` legacy output.
+
+| Crate (version) | Why | Why this lib | Alternatives rejected | License |
+|---|---|---|---|---|
+| lopdf 0.44 (direct) | page ops (split/count/extract) printpdf can't do | already in tree as printpdf's engine (no new native code) | pdf-extract 0.7 (pins lopdf 0.34 → version clash) | MIT |
+| docx-rs 0.4 | .docx writer, builder API, pure Rust | maintained, MIT, minimal deps (zip+serde) | manual OOXML zip (reimpl), pandoc-shellout (no shell) | MIT |

@@ -13,5 +13,5 @@ mod orchestrator;
 pub use batch::{run_batch, split_request, BatchConfig, BatchReport, CancelFlag, NullSink};
 pub use cancel_registry::CancelRegistry;
 pub use filesystem::StdFileSystem;
-pub use naming::resolve_output;
+pub use naming::{apply_collision, resolve_output};
 pub use orchestrator::{EngineDeps, Orchestrator};

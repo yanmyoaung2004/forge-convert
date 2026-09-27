@@ -17,6 +17,9 @@ pub fn run() {
             commands::convert_image,
             commands::cancel_convert,
             commands::convert_images_to_pdf,
+            commands::split_pdf,
+            commands::pdf_to_docx,
+            commands::pdf_page_count,
             commands::list_presets,
             commands::get_history,
         ])

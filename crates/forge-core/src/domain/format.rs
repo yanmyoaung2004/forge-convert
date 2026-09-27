@@ -13,6 +13,9 @@ pub enum ImageFormat {
     Bmp,
     Tiff,
     Pdf,
+    /// Word document (PDF → .docx export target only; never decoded,
+    /// never an image pipeline stage — v0.3.0 plan slice 0).
+    Docx,
 }
 
 impl ImageFormat {
@@ -26,6 +29,7 @@ impl ImageFormat {
             Self::Bmp => "bmp",
             Self::Tiff => "tiff",
             Self::Pdf => "pdf",
+            Self::Docx => "docx",
         }
     }
 
@@ -39,6 +43,7 @@ impl ImageFormat {
             Self::Bmp => "image/bmp",
             Self::Tiff => "image/tiff",
             Self::Pdf => "application/pdf",
+            Self::Docx => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }
     }
 
@@ -53,6 +58,7 @@ impl ImageFormat {
             "bmp" => Some(Self::Bmp),
             "tif" | "tiff" => Some(Self::Tiff),
             "pdf" => Some(Self::Pdf),
+            "docx" => Some(Self::Docx),
             _ => None,
         }
     }
@@ -127,6 +133,19 @@ impl ImageFormat {
                 supports_lossy: false,
                 supports_metadata: true,
             },
+            Self::Docx => FormatDescriptor {
+                name: "Word",
+                extensions: &["docx"],
+                mime_types: &[
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ],
+                can_decode: false, // export target only, never read back
+                can_encode: true,  // PDF→.docx via forge-pdf
+                supports_alpha: false,
+                supports_lossless: true,
+                supports_lossy: false,
+                supports_metadata: false,
+            },
         }
     }
 
@@ -140,10 +159,10 @@ impl ImageFormat {
             Self::Bmp,
             Self::Tiff,
             Self::Pdf,
+            Self::Docx,
         ]
     }
 }
-
 /// Static capability record surfaced to UI/CLI
 /// ("what can I convert this file to?").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +189,15 @@ impl FormatCapabilities {
     #[must_use]
     pub fn targets_for(source: ImageFormat) -> Vec<ImageFormat> {
         match source {
-            ImageFormat::Pdf => vec![ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::Webp],
+            // PDF renders to images (stubbed) and exports to Word.
+            ImageFormat::Pdf => vec![
+                ImageFormat::Png,
+                ImageFormat::Jpeg,
+                ImageFormat::Webp,
+                ImageFormat::Docx,
+            ],
+            // Word is a terminal export target: nothing converts FROM it.
+            ImageFormat::Docx => vec![],
             _ => vec![
                 ImageFormat::Png,
                 ImageFormat::Jpeg,
@@ -345,11 +372,21 @@ mod tests {
         for f in ImageFormat::all() {
             let targets = FormatCapabilities::targets_for(*f);
             assert!(!targets.contains(f), "self target for {f:?}");
+            // Docx is a terminal export target: nothing converts FROM it.
+            if *f == ImageFormat::Docx {
+                assert!(targets.is_empty(), "Docx must have no targets");
+                continue;
+            }
             assert!(!targets.is_empty());
         }
-        // Images can target PDF; PDF targets images only.
+        // Images can target PDF; PDF targets images + Word.
         assert!(FormatCapabilities::targets_for(ImageFormat::Png).contains(&ImageFormat::Pdf));
         assert!(!FormatCapabilities::targets_for(ImageFormat::Pdf).contains(&ImageFormat::Pdf));
+        // v0.3.0: PDF exports to Word; images never target Word directly.
+        assert!(FormatCapabilities::targets_for(ImageFormat::Pdf).contains(&ImageFormat::Docx));
+        assert!(!FormatCapabilities::targets_for(ImageFormat::Png).contains(&ImageFormat::Docx));
+        assert_eq!(ImageFormat::from_extension("docx"), Some(ImageFormat::Docx));
+        assert_eq!(ImageFormat::Docx.extension(), "docx");
     }
 
     #[test]

@@ -117,6 +117,26 @@ pub trait PdfRenderer: Send + Sync {
     fn render(&self, pdf_bytes: &[u8], pages: &[u32], dpi: u16) -> Result<Vec<CanonicalImage>>;
 }
 
+/// PDF page ops: split + page count (v0.3.0 plan slice 0).
+/// Implemented in `forge-pdf` over `lopdf` (ADR 009 foresaw this).
+pub trait PdfSplitter: Send + Sync {
+    /// Total 1-based page count of `pdf_bytes`.
+    fn page_count(&self, pdf_bytes: &[u8]) -> Result<u32>;
+    /// Keep `range.pages` (1-based, validated `<= total`), return new PDF bytes.
+    fn split(&self, pdf_bytes: &[u8], range: &crate::domain::PageRange) -> Result<Vec<u8>>;
+}
+
+/// PDF → Word (.docx) export (v0.3.0 plan slice 0).
+/// Implemented in `forge-pdf`: text extraction + `docx-rs` writer.
+pub trait PdfToDocx: Send + Sync {
+    /// Extract text (all pages when `range` is `None`) into .docx bytes.
+    fn convert(
+        &self,
+        pdf_bytes: &[u8],
+        range: Option<&crate::domain::PageRange>,
+    ) -> Result<Vec<u8>>;
+}
+
 /// Persist + query job records (engine-tested via in-memory fake;
 /// SQLite adapter lands in Phase 9 behind this port).
 pub trait JobRepository: Send + Sync {

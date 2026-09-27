@@ -158,7 +158,34 @@ enum Command {
         #[arg(long)]
         pages: Option<String>,
     },
-    /// Inspect an image (format, dimensions, alpha, size).
+    /// Split PDF pages (e.g. `--pages 2-5` keeps pages 2–5).
+    PdfSplit {
+        /// Input PDF.
+        input: PathBuf,
+        /// Page range, e.g. `1-3` or `1,3,5-7` (same grammar as `render --pages`).
+        #[arg(long)]
+        pages: String,
+        /// Output PDF file (default: `{stem}-split.pdf` beside input).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
+    /// Export PDF text to Word (.docx, text-only, one paragraph per line).
+    PdfToDocx {
+        /// Input PDF.
+        input: PathBuf,
+        /// Page range, e.g. `1-3` (default: all pages).
+        #[arg(long)]
+        pages: Option<String>,
+        /// Output .docx file (default: `{stem}.docx` beside input).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
     Info {
         /// Input file.
         input: PathBuf,
@@ -448,7 +475,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                     p.extension()
                         .and_then(|x| x.to_str())
                         .and_then(ImageFormat::from_extension)
-                        .is_some_and(|f| f != ImageFormat::Pdf)
+                        .is_some_and(|f| f != ImageFormat::Pdf && f != ImageFormat::Docx)
                 })
                 .collect();
             inputs.sort();
@@ -576,6 +603,92 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             println!("pixel: {:?}", image.pixel_format);
             println!("alpha: {}", image.has_alpha);
             println!("size: {meta} bytes");
+            Ok(())
+        }
+        Command::PdfSplit {
+            input,
+            pages,
+            output,
+            on_collision,
+        } => {
+            use forge_core::{PageRange, PdfSplitter as _};
+            use forge_pdf::LopdfSplitter;
+            let bytes = StdFileSystem.read(&input)?;
+            let detected = forge_core::detect_input_format(&input, Some(&bytes))?;
+            if detected != ImageFormat::Pdf {
+                return Err(ForgeError::UnsupportedFormat(format!(
+                    "pdf-split needs a PDF input, got {}",
+                    detected.mime_type()
+                )));
+            }
+            let range = PageRange::parse(&pages)?;
+            let out_bytes = LopdfSplitter.split(&bytes, &range)?;
+            let candidate = output.unwrap_or_else(|| {
+                let stem = forge_core::canonical_stem_of(&input);
+                let dir = input
+                    .parent()
+                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+                dir.join(format!("{stem}-split.pdf"))
+            });
+            let target = resolve_explicit_output(&candidate, on_collision.to_policy())?;
+            let Some(target) = target else {
+                println!("{}", candidate.display());
+                eprintln!("skipped (exists): {}", candidate.display());
+                return Ok(());
+            };
+            StdFileSystem.write_atomic(&target, &out_bytes)?;
+            println!("{}", target.display());
+            record_history(
+                "pdf-split",
+                &input,
+                &target,
+                ImageFormat::Pdf,
+                &ConversionOptions::default(),
+                0,
+            );
+            Ok(())
+        }
+        Command::PdfToDocx {
+            input,
+            pages,
+            output,
+            on_collision,
+        } => {
+            use forge_core::{PageRange, PdfToDocx as _};
+            use forge_pdf::LopdfToDocx;
+            let bytes = StdFileSystem.read(&input)?;
+            let detected = forge_core::detect_input_format(&input, Some(&bytes))?;
+            if detected != ImageFormat::Pdf {
+                return Err(ForgeError::UnsupportedFormat(format!(
+                    "pdf-to-docx needs a PDF input, got {}",
+                    detected.mime_type()
+                )));
+            }
+            let range = pages.as_deref().map(PageRange::parse).transpose()?;
+            let out_bytes = LopdfToDocx.convert(&bytes, range.as_ref())?;
+            let candidate = output.unwrap_or_else(|| {
+                let stem = forge_core::canonical_stem_of(&input);
+                let dir = input
+                    .parent()
+                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+                dir.join(format!("{stem}.docx"))
+            });
+            let target = resolve_explicit_output(&candidate, on_collision.to_policy())?;
+            let Some(target) = target else {
+                println!("{}", candidate.display());
+                eprintln!("skipped (exists): {}", candidate.display());
+                return Ok(());
+            };
+            StdFileSystem.write_atomic(&target, &out_bytes)?;
+            println!("{}", target.display());
+            record_history(
+                "pdf-to-docx",
+                &input,
+                &target,
+                ImageFormat::Docx,
+                &ConversionOptions::default(),
+                0,
+            );
             Ok(())
         }
         Command::Optimize {
@@ -752,6 +865,16 @@ fn is_explicit_file(path: &Path) -> bool {
         .and_then(|x| x.to_str())
         .and_then(ImageFormat::from_extension)
         .is_some()
+}
+
+/// Apply the collision policy to an EXPLICIT file candidate (pdf-split /
+/// pdf-to-docx defaults are already concrete paths — no stem-derivation).
+/// Returns `Ok(None)` for Skip-when-exists (caller echoes + returns).
+fn resolve_explicit_output(
+    candidate: &Path,
+    policy: forge_core::CollisionPolicy,
+) -> Result<Option<PathBuf>, ForgeError> {
+    forge_engine::apply_collision(candidate, policy)
 }
 
 /// Parse `WIDTHxHEIGHT` (e.g. `800x600`, case-insensitive `x`).

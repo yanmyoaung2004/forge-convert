@@ -160,6 +160,9 @@ impl ImageEncoder for ForgeImageEncoder {
             ImageFormat::Pdf => Err(ForgeError::UnsupportedFormat(
                 "PDF is written by forge-pdf, not the image encoder".to_string(),
             )),
+            ImageFormat::Docx => Err(ForgeError::UnsupportedFormat(
+                "Word export is PDF-only (use pdf-to-docx), not the image encoder".to_string(),
+            )),
         }
     }
 }
@@ -192,7 +195,7 @@ impl TransformStep for ResizeStep {
 /// Legacy name: identical behavior (fit-inside via `max_dimensions`).
 pub type FitWithinStep = ResizeStep;
 
-/// Convert `ImageFormat` → `image::ImageFormat` (PDF has no mapping).
+/// Convert `ImageFormat` → `image::ImageFormat` (PDF/Docx have no mapping).
 fn to_image_format(format: ImageFormat) -> Option<image::ImageFormat> {
     match format {
         ImageFormat::Png => Some(image::ImageFormat::Png),
@@ -200,7 +203,7 @@ fn to_image_format(format: ImageFormat) -> Option<image::ImageFormat> {
         ImageFormat::Webp => Some(image::ImageFormat::WebP),
         ImageFormat::Bmp => Some(image::ImageFormat::Bmp),
         ImageFormat::Tiff => Some(image::ImageFormat::Tiff),
-        ImageFormat::Pdf => None,
+        ImageFormat::Pdf | ImageFormat::Docx => None,
     }
 }
 

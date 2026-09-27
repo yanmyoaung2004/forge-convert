@@ -16,6 +16,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 webp = "0.3"
 printpdf = { version = "0.12", default-features = false, features = ["images"] }
 kamadak-exif = "0.6"
+lopdf = { version = "0.44", default-features = false }
+docx-rs = { version = "0.4" }
 clap = { version = "4.6", features = ["derive"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
