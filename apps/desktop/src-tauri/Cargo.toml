@@ -10,7 +10,7 @@ name = "forgeconvert_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6" }
+tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
 forge-core = { path = "../../../crates/forge-core" }
