@@ -1,7 +1,7 @@
 name: release
 
 # Cut a release by pushing a version tag:
-#   git tag v0.2.0 && git push origin v0.2.0
+#   git tag v0.2.1 && git push origin v0.2.1
 # Builds CLI binaries (Windows/Linux/macOS) + Windows desktop
 # installers (MSI/NSIS) and attaches them to the GitHub Release.
 
@@ -89,5 +89,5 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
-          generate_release_notes: true
+          files: |
+            dist/**/*

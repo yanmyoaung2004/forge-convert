@@ -1435,14 +1435,14 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "forge-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "forge-engine"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "criterion",
  "forge-core",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "forge-image"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "forge-core",
  "image",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "forge-pdf"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "forge-core",
  "printpdf",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "forge-store"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "forge-core",
  "rusqlite",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "forgeconvert"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "forge-core",
@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "forgeconvert_desktop"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "forge-core",
  "forge-engine",
