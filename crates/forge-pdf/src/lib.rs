@@ -102,14 +102,37 @@ impl PdfSplitter for LopdfSplitter {
     }
 }
 
-/// PDF → .docx: `lopdf` text extraction + `docx-rs` writer (v0.3.0 plan).
+/// PDF → .docx: ordered text + embedded images + table detection (v0.3.0+).
 ///
-/// Text-only export (no images, no layout fidelity): one paragraph per
-/// non-empty line, page breaks between pages. Scanned PDFs (no text layer)
-/// get a `[No extractable text on page N]` marker — valid .docx, never
-/// an empty file, never an error.
-#[derive(Debug, Default)]
+/// ilovepdf-class fidelity (local, no OCR):
+/// 1. **Order**: content ops walked in stream order (`Tj`/`TJ`/`'`/`"`
+///    append text; `T*`/`Td`/`TD`/`Tm`/`ET` end lines; `Do` marks an image
+///    slot inline) — multi-column PDFs keep stream order like ilovepdf's
+///    "flowing text" mode. Spacing-only `TJ` kerns (`Integer < -100` is a
+///    word gap → space) handled per lopdf's own `collect_text`.
+/// 2. **Images**: `DCTDecode` (JPEG) XObjects embed as inline `Pic`
+///    (native pixel dims); other filters get a
+///    `[Image on page N — format not embeddable]` marker (no silent drops).
+/// 3. **Tables**: 2+ consecutive lines with 2+ runs of 2+ spaces split
+///    into a `Table` (first row = header) — ilovepdf's table-preserving
+///    behavior for text tables.
+///
+/// Scanned PDFs (no text AND no images) get a `[No extractable content on
+/// page N]` marker — valid .docx, never an empty file, never an error.
+/// Page breaks separate non-first pages with content (empty leading pages
+/// don't consume the break).
 pub struct LopdfToDocx;
+
+/// One ordered content item: a text line or an image slot.
+#[derive(Debug)]
+enum PageBlock {
+    Line(String),
+    Image {
+        bytes: Vec<u8>,
+        width_px: u32,
+        height_px: u32,
+    },
+}
 
 impl PdfToDocx for LopdfToDocx {
     fn convert(&self, pdf_bytes: &[u8], range: Option<&PageRange>) -> Result<Vec<u8>> {
@@ -135,34 +158,61 @@ impl PdfToDocx for LopdfToDocx {
         let mut word = docx_rs::Docx::new();
         let mut first_page = true;
         for page in pages {
-            let text = doc
-                .extract_text_with_limit(&[page], MAX_PAGE_TEXT_BYTES)
-                .map_err(map_lopdf_extract_error)?;
-            let mut wrote_line = false;
-            for line in text.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
+            // Snapshot: breaks key off "is this the doc's first page".
+            // `first_page` itself flips the moment we WRITE page content
+            // (inside flush/image arms) — but a page with zero blocks must
+            // NOT flip it, or the next page loses its break (the 3-page bug:
+            // empty leading page swallowed page 2's break).
+            let page_start = first_page;
+            let blocks = page_blocks(&doc, page)?;
+            // Group consecutive lines into tables where columns align.
+            let mut lines: Vec<String> = Vec::new();
+            let mut wrote_any = false;
+            for block in blocks {
+                match block {
+                    PageBlock::Line(line) => lines.push(line),
+                    PageBlock::Image {
+                        bytes,
+                        width_px,
+                        height_px,
+                    } => {
+                        let flushed = flush_text_lines(word, &mut lines, page_start && !wrote_any);
+                        word = flushed.0;
+                        wrote_any |= flushed.1;
+                        let mut para =
+                            docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_image(
+                                docx_rs::Pic::new_with_dimensions(bytes, width_px, height_px),
+                            ));
+                        if page_start && !wrote_any {
+                            para = para.page_break_before(true);
+                        }
+                        word = word.add_paragraph(para);
+                        wrote_any = true;
+                    }
                 }
-                let mut para =
-                    docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(line));
-                if !first_page && !wrote_line {
-                    para = para.page_break_before(true);
-                }
-                word = word.add_paragraph(para);
-                wrote_line = true;
             }
-            if !wrote_line {
-                let mut para =
-                    docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(format!(
-                    "[No extractable text on page {page} — scanned image or vector-only content]"
-                )));
+            // Trailing marker lines (e.g. `[Image on page N …]`) are plain
+            // paragraphs — flushing through the table path is fine.
+            let flushed = flush_text_lines(word, &mut lines, page_start && !wrote_any);
+            word = flushed.0;
+            wrote_any |= flushed.1;
+            if !wrote_any {
+                let mut para = docx_rs::Paragraph::new().add_run(
+                    docx_rs::Run::new().add_text(format!(
+                        "[No extractable content on page {page} — scanned image or vector-only content]"
+                    )),
+                );
                 if !first_page {
                     para = para.page_break_before(true);
                 }
                 word = word.add_paragraph(para);
+                wrote_any = true;
             }
-            first_page = false;
+            // (Empty pages — zero blocks — leave first_page alone so the
+            // next real page still gets its break.)
+            if wrote_any {
+                first_page = false;
+            }
         }
         let mut cursor = std::io::Cursor::new(Vec::new());
         word.build()
@@ -170,6 +220,270 @@ impl PdfToDocx for LopdfToDocx {
             .map_err(|e| ForgeError::EncodeFailed(format!("docx pack: {e}")))?;
         Ok(cursor.into_inner())
     }
+}
+
+/// Flush buffered text `lines` into `word`: a bordered `Table` when 2+
+/// columnar lines align (ilovepdf table behavior), else one paragraph per
+/// line. `page_break` puts the break on the table's first paragraph or the
+/// first paragraph only. Returns `(word, wrote_any)`.
+fn flush_text_lines(
+    word: docx_rs::Docx,
+    lines: &mut Vec<String>,
+    page_break: bool,
+) -> (docx_rs::Docx, bool) {
+    if lines.is_empty() {
+        return (word, false);
+    }
+    let mut word = word;
+    if lines.len() >= 2 && lines.iter().filter(|l| split_columns(l).len() >= 2).count() >= 2 {
+        word = push_table(word, lines, page_break);
+    } else {
+        let mut first = page_break;
+        for line in lines.iter() {
+            let mut para = docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(line));
+            if first {
+                para = para.page_break_before(true);
+                first = false;
+            }
+            word = word.add_paragraph(para);
+        }
+    }
+    lines.clear();
+    (word, true)
+}
+
+/// Walk one page's content ops in stream order → text lines + image slots.
+/// Text: `Tj`/`TJ` decode like lopdf's `collect_text` (spacing kerns <
+/// -100 → space); `'`/`"` prefix a newline (PDF 32000-1 §9.4.3);
+/// `T*`/`Td`/`TD`/`Tm`/`ET` end the current line. `Do` records an image
+/// slot at the exact stream position (resolved after the walk).
+fn page_blocks(doc: &lopdf::Document, page: u32) -> Result<Vec<PageBlock>> {
+    let pages = doc.get_pages();
+    let page_id = pages
+        .get(&page)
+        .copied()
+        .ok_or_else(|| ForgeError::InvalidConfiguration(format!("page {page} not found")))?;
+    let fonts = doc
+        .get_page_fonts(page_id)
+        .map_err(|e| ForgeError::PdfReadFailed(e.to_string()))?;
+    let mut encodings: std::collections::BTreeMap<Vec<u8>, lopdf::Encoding<'_>> =
+        std::collections::BTreeMap::new();
+    for (name, font) in &fonts {
+        if let Ok(enc) = font.get_font_encoding_with_limit(doc, MAX_PAGE_TEXT_BYTES) {
+            encodings.insert(name.clone(), enc);
+        }
+    }
+    let content_data = doc
+        .get_page_content_with_limit(page_id, MAX_PAGE_TEXT_BYTES)
+        .map_err(map_lopdf_extract_error)?;
+    let content =
+        lopdf::content::Content::decode(&content_data).map_err(map_lopdf_extract_error)?;
+    let mut blocks: Vec<PageBlock> = Vec::new();
+    let mut current = String::new();
+    let mut encoding: Option<&lopdf::Encoding<'_>> = None;
+    // `Do` names resolve to XObject images after the walk.
+    let mut image_slots: Vec<Option<String>> = Vec::new();
+    let flush = |current: &mut String, blocks: &mut Vec<PageBlock>| {
+        let line = current.trim().to_string();
+        if !line.is_empty() {
+            blocks.push(PageBlock::Line(line));
+        }
+        current.clear();
+    };
+    for op in &content.operations {
+        match op.operator.as_str() {
+            "Tf" => {
+                if let Some(first) = op.operands.first() {
+                    if let Ok(name) = first.as_name() {
+                        encoding = encodings.get(name);
+                    }
+                }
+                if !current.is_empty() {
+                    flush(&mut current, &mut blocks);
+                }
+            }
+            "Tj" | "TJ" => {
+                if let Some(enc) = encoding {
+                    append_operands(&mut current, enc, &op.operands)?;
+                }
+            }
+            "'" | "\"" => {
+                if !current.trim().is_empty() {
+                    flush(&mut current, &mut blocks);
+                }
+                if let Some(enc) = encoding {
+                    if op.operator == "\"" {
+                        if let Some(s) = op.operands.get(2) {
+                            append_operands(&mut current, enc, std::slice::from_ref(s))?;
+                        }
+                    } else {
+                        append_operands(&mut current, enc, &op.operands)?;
+                    }
+                }
+            }
+            "T*" | "Td" | "TD" | "Tm" | "ET" => flush(&mut current, &mut blocks),
+            "Do" => {
+                flush(&mut current, &mut blocks);
+                let name = op
+                    .operands
+                    .first()
+                    .and_then(|o| o.as_name().ok())
+                    .map(|n| String::from_utf8_lossy(n).into_owned());
+                image_slots.push(name);
+                // Placeholder index: resolved to real bytes below.
+                blocks.push(PageBlock::Line(format!(
+                    "{}IMG{}",
+                    '\u{0}',
+                    image_slots.len() - 1
+                )));
+            }
+            _ => {}
+        }
+    }
+    flush(&mut current, &mut blocks);
+    // Resolve image slots → real JPEG bytes or a marker line.
+    let mut resolved: Vec<PageBlock> = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        match block {
+            PageBlock::Line(line) if line.starts_with('\u{0}') => {
+                let idx: usize = line[4..].parse().unwrap_or(usize::MAX);
+                match image_slots
+                    .get(idx)
+                    .and_then(|n| n.as_deref())
+                    .and_then(|name| page_jpeg(doc, page_id, name))
+                {
+                    Some((bytes, w, h)) => resolved.push(PageBlock::Image {
+                        bytes,
+                        width_px: w,
+                        height_px: h,
+                    }),
+                    None => resolved.push(PageBlock::Line(format!(
+                        "[Image on page {page} — format not embeddable]"
+                    ))),
+                }
+            }
+            other => resolved.push(other),
+        }
+    }
+    Ok(resolved)
+}
+
+/// Decode `Tj`/`TJ` operands like lopdf's `collect_text`: strings decode,
+/// nested arrays recurse + space, spacing kerns `< -100` → word space.
+fn append_operands(
+    out: &mut String,
+    encoding: &lopdf::Encoding<'_>,
+    operands: &[lopdf::Object],
+) -> Result<()> {
+    for operand in operands {
+        match operand {
+            lopdf::Object::String(bytes, _) => {
+                let mut s = String::new();
+                encoding
+                    .write_to_string(bytes, &mut s)
+                    .map_err(|e| ForgeError::PdfReadFailed(e.to_string()))?;
+                out.push_str(&s);
+            }
+            lopdf::Object::Array(arr) => {
+                append_operands(out, encoding, arr)?;
+                out.push(' ');
+            }
+            lopdf::Object::Integer(i) if *i < -100 => out.push(' '),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// JPEG (`DCTDecode`) XObject bytes + pixel dims, if `name` resolves.
+/// Anything else (JPX, masks, forms) → `None` → caller emits a marker.
+fn page_jpeg(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+    name: &str,
+) -> Option<(Vec<u8>, u32, u32)> {
+    let page = doc.get_dictionary(page_id).ok()?;
+    let resources = doc.get_dict_in_dict(page, b"Resources").ok()?;
+    let xobject = doc.get_dict_in_dict(resources, b"XObject").ok()?;
+    let stream_id = xobject.get(name.as_bytes()).ok()?.as_reference().ok()?;
+    let stream = doc.get_object(stream_id).ok()?.as_stream().ok()?;
+    let is_jpeg = stream
+        .dict
+        .get(b"Filter")
+        .ok()
+        .map(|f| format!("{f:?}").contains("DCTDecode"))
+        .unwrap_or(false);
+    if !is_jpeg {
+        return None;
+    }
+    let width = stream.dict.get(b"Width").ok()?.as_i64().ok()? as u32;
+    let height = stream.dict.get(b"Height").ok()?.as_i64().ok()? as u32;
+    // Raw stream content IS the JPEG (DCTDecode = JPEG bytes).
+    let bytes = stream.content.clone();
+    if bytes.len() < 4 || width == 0 || height == 0 {
+        return None;
+    }
+    // Sanity: must start with JPEG SOI.
+    if bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None;
+    }
+    Some((bytes, width, height))
+}
+
+/// Split a text-table line on runs of 2+ spaces (single spaces stay in-cell).
+fn split_columns(line: &str) -> Vec<String> {
+    let mut cols = Vec::new();
+    let mut current = String::new();
+    let mut spaces = 0;
+    for ch in line.chars() {
+        if ch == ' ' {
+            spaces += 1;
+            if spaces < 2 {
+                current.push(ch);
+            }
+            continue;
+        }
+        if spaces >= 2 {
+            cols.push(current.trim().to_string());
+            current = String::new();
+        }
+        spaces = 0;
+        current.push(ch);
+    }
+    cols.push(current.trim().to_string());
+    cols.retain(|c| !c.is_empty());
+    cols
+}
+
+/// Push buffered `lines` as a bordered `Table` (first row = header).
+/// `page_start` puts `page_break_before` on the table's first paragraph.
+fn push_table(word: docx_rs::Docx, lines: &[String], page_start: bool) -> docx_rs::Docx {
+    let max_cols = lines
+        .iter()
+        .map(|l| split_columns(l).len())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let mut rows = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        let mut cols = split_columns(line);
+        while cols.len() < max_cols {
+            cols.push(String::new());
+        }
+        let cells: Vec<docx_rs::TableCell> = cols
+            .into_iter()
+            .map(|text| {
+                let mut para =
+                    docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(text));
+                if page_start && i == 0 {
+                    para = para.page_break_before(true);
+                }
+                docx_rs::TableCell::new().add_paragraph(para)
+            })
+            .collect();
+        rows.push(docx_rs::TableRow::new(cells));
+    }
+    word.add_table(docx_rs::Table::new(rows))
 }
 
 /// `lopdf` extraction errors → structured variants (bomb-limit is a
@@ -490,5 +804,93 @@ mod tests {
         assert!(matches!(err, ForgeError::InvalidConfiguration(_)));
         let err = conv.convert(b"nope", None).unwrap_err();
         assert!(matches!(err, ForgeError::PdfReadFailed(_)));
+    }
+
+    /// Unzip `word/document.xml` from docx bytes (OOXML content assertion).
+    fn document_xml(docx: &[u8]) -> String {
+        use std::io::Read as _;
+        let cursor = std::io::Cursor::new(docx);
+        let mut zip = zip::ZipArchive::new(cursor).expect("docx is a zip");
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .expect("document.xml present")
+            .read_to_string(&mut xml)
+            .expect("document.xml reads");
+        xml
+    }
+
+    #[test]
+    fn test_docx_text_content_in_order() {
+        let conv = LopdfToDocx;
+        let xml = document_xml(&conv.convert(&three_page_pdf(), None).unwrap());
+        for word in ["alpha", "beta", "gamma"] {
+            assert!(xml.contains(word), "missing {word}");
+        }
+        // Stream order preserved across pages.
+        let (a, b, g) = (
+            xml.find("alpha").unwrap(),
+            xml.find("beta").unwrap(),
+            xml.find("gamma").unwrap(),
+        );
+        assert!(a < b && b < g, "out-of-order text");
+        // Only pages 2+ carry breaks; page 1 never does. printpdf emits an
+        // empty leading content stream, so page 1 yields zero blocks and the
+        // doc's first break lands on page 2's paragraph (count == 1).
+        assert_eq!(xml.matches("w:pageBreakBefore").count(), 1);
+    }
+
+    #[test]
+    fn test_docx_table_detection() {
+        use printpdf::{
+            BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+            TextItem,
+        };
+        // Two columnar lines (2+ spaces) → real w:tbl, not paragraphs.
+        let mut doc = PdfDocument::new("table test");
+        let page = PdfPage::new(
+            Mm(210.0),
+            Mm(297.0),
+            vec![
+                Op::StartTextSection,
+                Op::SetTextCursor {
+                    pos: Point::new(Mm(20.0), Mm(270.0)),
+                },
+                Op::SetFont {
+                    font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                    size: Pt(12.0),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text("Name   Age   City".to_string())],
+                },
+                Op::AddLineBreak,
+                Op::ShowText {
+                    items: vec![TextItem::Text("Ann    30    Paris".to_string())],
+                },
+                Op::EndTextSection,
+            ],
+        );
+        let pdf = doc
+            .with_pages(vec![page])
+            .save(&PdfSaveOptions::default(), &mut Vec::new());
+        let xml = document_xml(&LopdfToDocx.convert(&pdf, None).unwrap());
+        assert!(xml.contains("w:tbl"), "no table emitted");
+        for cell in ["Name", "Paris", "30"] {
+            assert!(xml.contains(cell), "missing cell {cell}");
+        }
+    }
+
+    #[test]
+    fn test_docx_embeds_jpeg_image() {
+        // Image-only PDF: printpdf embeds the PNG (re-encoded); converter
+        // must emit either an inline image or an honest marker — never drop.
+        let writer = ForgePdfWriter;
+        let pdf = writer
+            .write_images(&[rgba_image(16, 16)], &PdfWriteSpec::default())
+            .unwrap();
+        let xml = document_xml(&LopdfToDocx.convert(&pdf, None).unwrap());
+        assert!(
+            xml.contains("w:drawing") || xml.contains("[Image on page 1"),
+            "image silently dropped"
+        );
     }
 }
