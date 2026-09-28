@@ -8,7 +8,7 @@ export interface ElementDef {
   kind: ElementKind;
   label: string;
   /** SVG primitive used for rendering/export. */
-  base: "rect" | "rounded" | "circle" | "ellipse" | "diamond" | "text";
+  base: "rect" | "rounded" | "circle" | "ellipse" | "diamond" | "text" | "cylinder";
   w: number;
   h: number;
   fill: string;
@@ -32,7 +32,7 @@ export const ELEMENTS: ElementDef[] = [
   { kind: "input", label: "Input", base: "rounded", w: 150, h: 70, fill: "#e8f0fe", stroke: "#2563eb", strokeWidth: 2, radius: 10 },
   { kind: "output", label: "Output", base: "rounded", w: 150, h: 70, fill: "#e6f4ea", stroke: "#15803d", strokeWidth: 2, radius: 10 },
   { kind: "process", label: "Process", base: "rect", w: 150, h: 80, fill: "#fef7e0", stroke: "#b7791f", strokeWidth: 2 },
-  { kind: "database", label: "Database", base: "ellipse", w: 150, h: 90, fill: "#f3e8fd", stroke: "#7c3aed", strokeWidth: 2 },
+  { kind: "database", label: "Database", base: "cylinder", w: 150, h: 100, fill: "#f3e8fd", stroke: "#7c3aed", strokeWidth: 2 },
   { kind: "server", label: "Server", base: "rect", w: 150, h: 90, fill: "#e8f0fe", stroke: "#1a73e8", strokeWidth: 2 },
   { kind: "api", label: "API", base: "rounded", w: 150, h: 70, fill: "#fdeede", stroke: BRAND, strokeWidth: 2, radius: 12 },
   { kind: "client", label: "Client", base: "rounded", w: 140, h: 80, fill: "#e0f2f1", stroke: "#00796b", strokeWidth: 2, radius: 12 },
@@ -40,7 +40,7 @@ export const ELEMENTS: ElementDef[] = [
   { kind: "queue", label: "Queue", base: "rect", w: 150, h: 70, fill: "#fff8e1", stroke: "#f9ab00", strokeWidth: 2 },
   { kind: "user", label: "User", base: "circle", w: 90, h: 90, fill: "#fce4ec", stroke: "#c2185b", strokeWidth: 2 },
   { kind: "document", label: "Document", base: "rect", w: 130, h: 90, fill: "#ffffff", stroke: LINE, strokeWidth: 2 },
-  { kind: "storage", label: "Storage", base: "ellipse", w: 150, h: 80, fill: "#ede7f6", stroke: "#4527a0", strokeWidth: 2 },
+  { kind: "storage", label: "Storage", base: "cylinder", w: 150, h: 90, fill: "#ede7f6", stroke: "#4527a0", strokeWidth: 2 },
 ];
 
 export function defOf(kind: ElementKind): ElementDef {
@@ -82,4 +82,24 @@ export function diamondPoints(x: number, y: number, w: number, h: number): strin
   const cx = x + w / 2;
   const cy = y + h / 2;
   return `${cx},${y} ${x + w},${cy} ${cx},${y + h} ${x},${cy}`;
+}
+
+/**
+ * Cylinder (disk-pack) body path: rect with elliptical top + bottom rims.
+ * `rim` = ellipse ry (capped so short boxes stay sane). Returns body outline
+ * + top-rim paths for shading.
+ */
+export function cylinderPaths(x: number, y: number, w: number, h: number): { body: string; top: string } {
+  const rim = Math.max(6, Math.min(w / 2, h * 0.18));
+  const r = (n: number): number => Math.round(n * 10) / 10;
+  const body =
+    `M ${r(x)} ${r(y + rim)} ` +
+    `A ${r(w / 2)} ${r(rim)} 0 0 1 ${r(x + w)} ${r(y + rim)} ` +
+    `L ${r(x + w)} ${r(y + h - rim)} ` +
+    `A ${r(w / 2)} ${r(rim)} 0 0 1 ${r(x)} ${r(y + h - rim)} Z`;
+  const top =
+    `M ${r(x)} ${r(y + rim)} ` +
+    `A ${r(w / 2)} ${r(rim)} 0 0 0 ${r(x + w)} ${r(y + rim)} ` +
+    `A ${r(w / 2)} ${r(rim)} 0 0 0 ${r(x)} ${r(y + rim)} Z`;
+  return { body, top };
 }

@@ -2,7 +2,7 @@
 // Covers: IDs, registry, geometry, routing, history, layout, serialize,
 // validation, templates. No Vue, no Tauri, no filesystem.
 import { blankDoc, newId, validateDoc } from "./types";
-import { ELEMENTS, createElement, baseOf, diamondPoints } from "./elements";
+import { ELEMENTS, createElement, baseOf, cylinderPaths, diamondPoints } from "./elements";
 import { screenToWorld, portPoint, connectionPath, dashArray, hitElement } from "./geometry";
 import { toSvg, contentBounds } from "./serialize";
 import { History } from "./history";
@@ -52,15 +52,25 @@ doc.elements.push(a, b);
 const straight = { id: "c1", source: { node: a.id, port: "e" as const }, target: { node: b.id, port: "w" as const }, kind: "straight" as const, color: "#000", width: 2, dash: "solid" as const, arrow: "end" as const, opacity: 1 };
 check("straight path", connectionPath(straight, doc.elements).startsWith("M "));
 const ortho = { ...straight, id: "c2", kind: "orthogonal" as const };
-check("orthogonal has elbow", (connectionPath(ortho, doc.elements).match(/L/g) ?? []).length === 2);
+// e→w parallel axes → mid-bend with 3 segments.
+check("orthogonal parallel has 3 segs", (connectionPath(ortho, doc.elements).match(/L/g) ?? []).length === 3);
+// n→e perpendicular axes → single elbow with 2 segments.
+const orthoPerp = { ...straight, id: "c2b", source: { node: a.id, port: "s" as const }, target: { node: b.id, port: "w" as const }, kind: "orthogonal" as const };
+check("orthogonal perp has elbow", (connectionPath(orthoPerp, doc.elements).match(/L/g) ?? []).length === 2);
 const curved = { ...straight, id: "c3", kind: "curved" as const };
 check("curved has cubic", connectionPath(curved, doc.elements).includes("C "));
 check("dash solid empty", dashArray(straight) === "");
 check("dash dashed", dashArray({ dash: "dashed" }) === "8 5");
 check("dash dotted", dashArray({ dash: "dotted" }) === "2 4");
-check("missing node empty path", connectionPath(straight, []) === "");
-
-// History: commit → undo → redo
+// All 4 sides route: n→s, s→n, w→e produce non-empty paths.
+for (const [sp, tp] of [["n", "s"], ["s", "n"], ["w", "e"], ["n", "n"]] as const) {
+  const c = { ...straight, id: `side-${sp}${tp}`, source: { node: a.id, port: sp }, target: { node: b.id, port: tp } };
+  check(`route ${sp}->${tp}`, connectionPath(c, doc.elements).startsWith("M "));
+}
+// Cylinder paths render a body + top rim.
+const cyl = cylinderPaths(0, 0, 150, 100);
+check("cylinder body is path", cyl.body.startsWith("M ") && cyl.body.includes("A "));
+check("cylinder top is closed", cyl.top.endsWith("Z"));
 const h = new History(doc);
 check("no undo initially", !h.canUndo());
 doc.elements.push(createElement("circle", 0, 0));

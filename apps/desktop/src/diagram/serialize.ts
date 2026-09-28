@@ -1,7 +1,7 @@
 // SVG serialization: DiagramDoc → standalone vector SVG string.
 // No Vue/DOM. Escapes text, emits markers once, viewBox from content bounds.
 import type { DiagramConnection, DiagramDoc, DiagramElement } from "./types";
-import { baseOf, diamondPoints } from "./elements";
+import { baseOf, cylinderPaths, diamondPoints } from "./elements";
 import { connectionPath, dashArray, portPoint } from "./geometry";
 
 function esc(s: string): string {
@@ -44,6 +44,10 @@ function shapeSvg(el: DiagramElement): string {
   }
   if (base === "diamond") {
     return `<polygon points="${diamondPoints(el.x, el.y, el.w, el.h)}" ${common}/>`;
+  }
+  if (base === "cylinder") {
+    const { body, top } = cylinderPaths(el.x, el.y, el.w, el.h);
+    return `<path d="${body}" ${common}/><path d="${top}" ${common}/>`;
   }
   if (base === "text") return "";
   if (base === "rounded") {

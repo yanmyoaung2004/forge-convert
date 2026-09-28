@@ -86,8 +86,10 @@ function byId<T extends { id: string }>(list: T[], id: string): T | undefined {
 
 /**
  * Build an SVG path `d` for a connection between resolved port points.
- * straight = line; orthogonal = H-then-V (or V-then-H) elbow via midpoint;
- * curved = cubic with horizontal control offset. Deterministic, no autorouting.
+ * straight = line; orthogonal = exits along the SOURCE port axis, enters
+ * along the TARGET port axis, single elbow (2 elbows when axes are
+ * parallel-but-offset); curved = cubic with port-aware control offset.
+ * Deterministic, no autorouting.
  */
 export function connectionPath(
   conn: DiagramConnection,
@@ -100,14 +102,42 @@ export function connectionPath(
   const q = portPoint(b, conn.target.port);
   if (conn.kind === "straight") return `M ${r(p.x)} ${r(p.y)} L ${r(q.x)} ${r(q.y)}`;
   if (conn.kind === "curved") {
-    const dx = Math.max(Math.abs(q.x - p.x) * 0.5, 30);
-    return `M ${r(p.x)} ${r(p.y)} C ${r(p.x + dx)} ${r(p.y)}, ${r(q.x - dx)} ${r(q.y)}, ${r(q.x)} ${r(q.y)}`;
+    // Control points extend along each port's outward axis so curves leave
+    // top/bottom vertically and left/right horizontally (all 4 sides work).
+    const dp = portDir(conn.source.port);
+    const dq = portDir(conn.target.port);
+    const dist = Math.max(Math.hypot(q.x - p.x, q.y - p.y) * 0.4, 30);
+    const c1 = { x: p.x + dp.x * dist, y: p.y + dp.y * dist };
+    const c2 = { x: q.x + dq.x * dist, y: q.y + dq.y * dist };
+    return `M ${r(p.x)} ${r(p.y)} C ${r(c1.x)} ${r(c1.y)}, ${r(c2.x)} ${r(c2.y)}, ${r(q.x)} ${r(q.y)}`;
   }
-  // orthogonal: exit horizontally from E/W ports, vertically from N/S ports
-  const fromH = conn.source.port === "e" || conn.source.port === "w";
-  const mx = fromH ? q.x : p.x;
-  const my = fromH ? p.y : q.y;
-  return `M ${r(p.x)} ${r(p.y)} L ${r(mx)} ${r(my)} L ${r(q.x)} ${r(q.y)}`;
+  // orthogonal: exit along source axis to the target's entry line, then
+  // enter along target axis. One elbow when axes cross, two when parallel.
+  const dp = portDir(conn.source.port);
+  const dq = portDir(conn.target.port);
+  const srcHoriz = dp.x !== 0;
+  const dstHoriz = dq.x !== 0;
+  if (srcHoriz !== dstHoriz) {
+    // Perpendicular axes: single elbow at (exit-line, entry-line) crossing.
+    const mx = srcHoriz ? q.x : p.x;
+    const my = srcHoriz ? p.y : q.y;
+    return `M ${r(p.x)} ${r(p.y)} L ${r(mx)} ${r(my)} L ${r(q.x)} ${r(q.y)}`;
+  }
+  // Parallel axes: mid-bend between the points.
+  const mx = (p.x + q.x) / 2;
+  const my = (p.y + q.y) / 2;
+  if (srcHoriz) {
+    return `M ${r(p.x)} ${r(p.y)} L ${r(mx)} ${r(p.y)} L ${r(mx)} ${r(q.y)} L ${r(q.x)} ${r(q.y)}`;
+  }
+  return `M ${r(p.x)} ${r(p.y)} L ${r(p.x)} ${r(my)} L ${r(q.x)} ${r(my)} L ${r(q.x)} ${r(q.y)}`;
+}
+
+/** Outward unit vector of a port (for curve controls + elbow axes). */
+function portDir(port: Port): Pt {
+  if (port === "e") return { x: 1, y: 0 };
+  if (port === "w") return { x: -1, y: 0 };
+  if (port === "s") return { x: 0, y: 1 };
+  return { x: 0, y: -1 };
 }
 
 /** Dash pattern for a line style (empty = solid). */

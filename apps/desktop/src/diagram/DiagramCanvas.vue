@@ -4,8 +4,9 @@ world units via geometry.screenToWorld. -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { DiagramConnection, DiagramElement, ElementKind, Port } from "./types";
-import { baseOf, diamondPoints } from "./elements";
+import { baseOf, cylinderPaths, diamondPoints } from "./elements";
 import { connectionPath, dashArray, hitElement, portAt, portPoint, screenToWorld } from "./geometry";
+
 const props = defineProps<{
   elements: DiagramElement[];
   connections: DiagramConnection[];
@@ -402,6 +403,20 @@ function isSelected(id: string): boolean {
           :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
           :opacity="el.opacity"
         />
+        <g v-else-if="baseOf(el.type) === 'cylinder'">
+          <path
+            :d="cylinderPaths(el.x, el.y, el.w, el.h).body"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+          <path
+            :d="cylinderPaths(el.x, el.y, el.w, el.h).top"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+        </g>
         <text
           :x="el.align === 'left' ? el.x + 8 : el.align === 'right' ? el.x + el.w - 8 : el.x + el.w / 2"
           :y="el.y + el.h / 2"
