@@ -1,15 +1,32 @@
-<!-- SVG source viewer: auto-refreshes, copy + download. -->
+<!-- SVG source: bidirectional. Editing the box + Import loads pasted SVG
+as editable blocks (svgToDoc); canvas edits re-render here. -->
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 
-defineProps<{ svg: string }>();
-const emit = defineEmits<{ copy: []; download: [] }>();
+const props = defineProps<{ svg: string }>();
+const emit = defineEmits<{ copy: []; download: []; importSvg: [text: string] }>();
 const copied = ref(false);
+const draft = ref(props.svg);
+const dirty = ref(false);
+
+watch(
+  () => props.svg,
+  (next) => {
+    // Don't clobber the user's paste while they type: only refresh when
+    // the box matches the last rendered value (i.e. not being edited).
+    if (!dirty.value) draft.value = next;
+  },
+);
 
 function onCopy(): void {
   copied.value = true;
   emit("copy");
   window.setTimeout(() => (copied.value = false), 1500);
+}
+
+function onImport(): void {
+  emit("importSvg", draft.value);
+  dirty.value = false;
 }
 </script>
 
@@ -18,11 +35,20 @@ function onCopy(): void {
     <div class="code-head">
       <strong>SVG</strong>
       <span class="dim">{{ svg.length }} chars</span>
+      <span v-if="dirty" class="edited" title="Edited — Import to load as blocks, or Revert">● edited</span>
       <span class="spacer" />
+      <button class="btn ghost sm" @click="onImport" title="Parse the box content into editable blocks">Import → blocks</button>
+      <button class="btn ghost sm" @click="draft = svg; dirty = false" title="Discard edits, show current canvas SVG">Revert</button>
       <button class="btn ghost sm" @click="onCopy" :title="copied ? 'Copied!' : 'Copy SVG source'">{{ copied ? "✓ Copied" : "Copy" }}</button>
       <button class="btn ghost sm" @click="emit('download')" title="Download .svg file">Download</button>
     </div>
-    <textarea class="src" readonly :value="svg" spellcheck="false" aria-label="Generated SVG source" />
+    <textarea
+      class="src"
+      v-model="draft"
+      spellcheck="false"
+      aria-label="SVG source (editable — Import loads it as blocks)"
+      @input="dirty = true"
+    ></textarea>
   </section>
 </template>
 
@@ -37,6 +63,7 @@ function onCopy(): void {
   gap: 0.5rem;
 }
 .code-head { display: flex; align-items: center; gap: 0.6rem; }
+.edited { color: var(--brand-deep); font-size: 0.8rem; font-weight: 700; }
 .spacer { flex: 1; }
 .src {
   width: 100%;
@@ -46,7 +73,6 @@ function onCopy(): void {
   font-size: 0.72rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0.5rem;
   resize: vertical;
   background: #fffdf9;
 }

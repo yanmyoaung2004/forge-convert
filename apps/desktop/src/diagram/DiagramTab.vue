@@ -14,7 +14,7 @@ import { layoutHierarchy, layoutHorizontal, layoutVertical } from "./layout";
 import { toSvg } from "./serialize";
 import { TEMPLATES } from "./templates";
 import { isCommandError } from "../api";
-
+import { svgToDoc } from "./importSvg";
 const doc = ref<DiagramDoc>(blankDoc());
 const selection = ref<string[]>([]);
 const selConn = ref<string | null>(null);
@@ -27,7 +27,6 @@ const dirty = ref(false);
 const clipboard = ref<{ elements: DiagramElement[]; connections: DiagramConnection[] } | null>(null);
 const history = new History(doc.value);
 const editingLabel = ref<string | null>(null);
-/** Active canvas tool (mirrors DiagramCanvas via ref). */
 const canvasRef = ref<{ setTool: (t: "select" | "pan") => void; tool: "select" | "pan" } | null>(null);
 const canvasTool = ref<"select" | "pan">("select");
 function setCanvasTool(t: "select" | "pan"): void {
@@ -343,6 +342,23 @@ async function downloadSvg(): Promise<void> {
   }
 }
 
+/** Paste/import path: SVG text → editable blocks (undoable, errors shown). */
+function importFromSvg(text: string): void {
+  error.value = null;
+  const result = svgToDoc(text, doc.value.metadata.name);
+  if (result.empty) {
+    error.value = result.notes[0] ?? "Nothing importable found.";
+    return;
+  }
+  doc.value = result.doc;
+  selection.value = [];
+  selConn.value = null;
+  history.reset(result.doc);
+  syncHistFlags();
+  commit();
+  if (result.notes.length > 1) error.value = result.notes.slice(1).join(" ");
+}
+
 function applyTemplate(key: string): void {
   const t = TEMPLATES.find((x) => x.key === key);
   if (!t) return;
@@ -527,7 +543,7 @@ onMounted(() => {
       />
       <PropsPanel :element="selectedEl" :connection="selectedConn" @patch-el="onPatchEl" @patch-conn="onPatchConn" />
     </div>
-    <CodeViewer :svg="svgText" @copy="copySvg" @download="downloadSvg" />
+    <CodeViewer :svg="svgText" @copy="copySvg" @download="downloadSvg" @import-svg="importFromSvg" />
   </section>
 </template>
 

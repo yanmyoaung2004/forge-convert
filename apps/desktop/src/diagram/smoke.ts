@@ -8,6 +8,7 @@ import { toSvg, contentBounds } from "./serialize";
 import { History } from "./history";
 import { layoutVertical, layoutHorizontal, layoutHierarchy } from "./layout";
 import { TEMPLATES } from "./templates";
+import { svgToDoc } from "./importSvg";
 import type { DiagramDoc } from "./types";
 
 let pass = 0;
@@ -123,5 +124,21 @@ for (const t of TEMPLATES) {
 }
 check("7 templates", TEMPLATES.length === 7);
 
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) throw new Error(`${fail} smoke checks failed`);
+// SVG import: round-trip our own output back to editable blocks.
+const exported = toSvg(doc);
+const back = svgToDoc(exported, "roundtrip");
+check("roundtrip not empty", !back.empty && back.doc.elements.length >= 2);
+check("roundtrip labels survive", back.doc.elements.some((e) => e.label === "A"));
+check("roundtrip valid doc", validateDoc(back.doc) === null);
+// Foreign SVG: plain rect + circle + text + line map to blocks.
+const foreign = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><rect x="10" y="10" width="120" height="60" fill="#fff" stroke="#000"/><circle cx="300" cy="40" r="25" fill="#eee" stroke="#333"/><text x="70" y="45" font-size="14">Hello</text><line x1="130" y1="40" x2="275" y2="40" stroke="#000"/></svg>`;
+const fImp = svgToDoc(foreign, "foreign");
+check("foreign imports shapes", fImp.doc.elements.length >= 3);
+check("foreign line becomes connection", fImp.doc.connections.length >= 1);
+// Garbage in: honest empty, no crash.
+check("empty input empty", svgToDoc("", "x").empty);
+check("non-svg empty", svgToDoc("<div>hi</div>", "x").empty);
+check("malformed empty", svgToDoc("<svg><rect", "x").empty);
+
+console.log(pass+" passed, "+fail+" failed");
+if(fail>0)throw new Error(fail+" failed");
