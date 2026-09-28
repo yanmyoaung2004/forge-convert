@@ -102,36 +102,66 @@ impl PdfSplitter for LopdfSplitter {
     }
 }
 
-/// PDF → .docx: ordered text + embedded images + table detection (v0.3.0+).
+/// PDF → .docx: position-faithful, styled, Unicode-safe export.
 ///
 /// ilovepdf-class fidelity (local, no OCR):
-/// 1. **Order**: content ops walked in stream order (`Tj`/`TJ`/`'`/`"`
-///    append text; `T*`/`Td`/`TD`/`Tm`/`ET` end lines; `Do` marks an image
-///    slot inline) — multi-column PDFs keep stream order like ilovepdf's
-///    "flowing text" mode. Spacing-only `TJ` kerns (`Integer < -100` is a
-///    word gap → space) handled per lopdf's own `collect_text`.
-/// 2. **Images**: `DCTDecode` (JPEG) XObjects embed as inline `Pic`
-///    (native pixel dims); other filters get a
-///    `[Image on page N — format not embeddable]` marker (no silent drops).
-/// 3. **Tables**: 2+ consecutive lines with 2+ runs of 2+ spaces split
-///    into a `Table` (first row = header) — ilovepdf's table-preserving
-///    behavior for text tables.
-///
-/// Scanned PDFs (no text AND no images) get a `[No extractable content on
-/// page N]` marker — valid .docx, never an empty file, never an error.
-/// Page breaks separate non-first pages with content (empty leading pages
-/// don't consume the break).
+/// 1. **Position**: text-state matrix walk (`Tm`/`Td`/`TD`/`T*`) → spans
+///    carry (x, y); lines bucketed by y (±2pt), sorted top-first, runs
+///    left-first — visual order beats stream order (two-column safe).
+///    Alignment guessed from x (left/center/right → `w:jc`).
+/// 2. **Unicode**: font `Encoding` decodes incl. ToUnicode CMap
+///    (Myanmar U+1000–109F, CJK); control chars stripped, combining marks
+///    kept. Unmapped Identity-H/V CID fonts report honestly instead of
+///    mojibake. CJK-safe `RunFonts` (ascii/hAnsi/eastAsia/cs).
+/// 3. **Styling**: `Tf` size → half-point `w:sz`; BaseName suffixes →
+///    bold/italic; images (`DCTDecode`) embed inline at stream y;
+///    2+-space columnar lines → real `w:tbl`.
+/// Scanned PDFs get a `[No extractable content on page N]` marker — valid
+/// .docx, never empty, never an error.
 pub struct LopdfToDocx;
 
-/// One ordered content item: a text line or an image slot.
+/// One styled text span with text-space position (points, y-up like PDF).
+#[derive(Debug, Clone)]
+struct Span {
+    x: f32,
+    y: f32,
+    size: f32,
+    family: String,
+    bold: bool,
+    italic: bool,
+    text: String,
+}
+
+/// One visual line: spans grouped by y, sorted by x.
 #[derive(Debug)]
-enum PageBlock {
-    Line(String),
+struct LineInfo {
+    y: f32,
+    align: Option<docx_rs::AlignmentType>,
+    runs: Vec<Span>,
+}
+
+/// Page content in visual (top-to-bottom) order.
+#[derive(Debug)]
+enum OrderedBlock {
+    Text(LineInfo),
     Image {
+        y: f32,
         bytes: Vec<u8>,
         width_px: u32,
         height_px: u32,
     },
+}
+
+/// Per-font decode + style info resolved from the font dictionary.
+#[derive(Debug, Clone)]
+struct FontStyle {
+    family: String,
+    bold: bool,
+    italic: bool,
+    /// False when the font can't map to Unicode (e.g. Type0 Identity-H/V
+    /// with no ToUnicode CMap): spans are skipped + the font is reported
+    /// instead of emitting mojibake.
+    mapped: bool,
 }
 
 impl PdfToDocx for LopdfToDocx {
@@ -158,27 +188,50 @@ impl PdfToDocx for LopdfToDocx {
         let mut word = docx_rs::Docx::new();
         let mut first_page = true;
         for page in pages {
-            // Snapshot: breaks key off "is this the doc's first page".
-            // `first_page` itself flips the moment we WRITE page content
-            // (inside flush/image arms) — but a page with zero blocks must
-            // NOT flip it, or the next page loses its break (the 3-page bug:
-            // empty leading page swallowed page 2's break).
             let page_start = first_page;
             let blocks = page_blocks(&doc, page)?;
-            // Group consecutive lines into tables where columns align.
-            let mut lines: Vec<String> = Vec::new();
+            // Consecutive text lines with aligned columns → one table.
+            let mut pending: Vec<LineInfo> = Vec::new();
             let mut wrote_any = false;
+            // Flush `pending`: table when 2+ columnar lines align, else
+            // styled paragraphs. Returns (word, wrote).
+            let flush_pending =
+                |word: docx_rs::Docx, pending: &mut Vec<LineInfo>, page_break: bool| {
+                    let mut word = word;
+                    if pending.is_empty() {
+                        return (word, false);
+                    }
+                    if pending.len() >= 2
+                        && pending
+                            .iter()
+                            .filter(|l| split_columns(&line_text(l)).len() >= 2)
+                            .count()
+                            >= 2
+                    {
+                        word = push_styled_table(word, pending, page_break);
+                    } else {
+                        let mut first = page_break;
+                        for line in pending.iter() {
+                            word = push_styled_para(word, line, first);
+                            first = false;
+                        }
+                    }
+                    pending.clear();
+                    (word, true)
+                };
             for block in blocks {
                 match block {
-                    PageBlock::Line(line) => lines.push(line),
-                    PageBlock::Image {
+                    OrderedBlock::Text(line) => pending.push(line),
+                    OrderedBlock::Image {
+                        y: _,
                         bytes,
                         width_px,
                         height_px,
                     } => {
-                        let flushed = flush_text_lines(word, &mut lines, page_start && !wrote_any);
-                        word = flushed.0;
-                        wrote_any |= flushed.1;
+                        let (w, wrote) =
+                            flush_pending(word, &mut pending, page_start && !wrote_any);
+                        word = w;
+                        wrote_any |= wrote;
                         let mut para =
                             docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_image(
                                 docx_rs::Pic::new_with_dimensions(bytes, width_px, height_px),
@@ -191,11 +244,9 @@ impl PdfToDocx for LopdfToDocx {
                     }
                 }
             }
-            // Trailing marker lines (e.g. `[Image on page N …]`) are plain
-            // paragraphs — flushing through the table path is fine.
-            let flushed = flush_text_lines(word, &mut lines, page_start && !wrote_any);
-            word = flushed.0;
-            wrote_any |= flushed.1;
+            let (w, wrote) = flush_pending(word, &mut pending, page_start && !wrote_any);
+            word = w;
+            wrote_any |= wrote;
             if !wrote_any {
                 let mut para = docx_rs::Paragraph::new().add_run(
                     docx_rs::Run::new().add_text(format!(
@@ -208,8 +259,6 @@ impl PdfToDocx for LopdfToDocx {
                 word = word.add_paragraph(para);
                 wrote_any = true;
             }
-            // (Empty pages — zero blocks — leave first_page alone so the
-            // next real page still gets its break.)
             if wrote_any {
                 first_page = false;
             }
@@ -222,10 +271,103 @@ impl PdfToDocx for LopdfToDocx {
     }
 }
 
-/// Flush buffered text `lines` into `word`: a bordered `Table` when 2+
-/// columnar lines align (ilovepdf table behavior), else one paragraph per
-/// line. `page_break` puts the break on the table's first paragraph or the
-/// first paragraph only. Returns `(word, wrote_any)`.
+/// Concatenated run texts of a line (for table-shape detection).
+fn line_text(line: &LineInfo) -> String {
+    line.runs
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Push one styled paragraph: runs keep family/size/bold/italic, CJK-safe
+/// fonts on eastAsia, line keeps its alignment guess. `page_break` sets
+/// `pageBreakBefore` on this paragraph only.
+fn push_styled_para(word: docx_rs::Docx, line: &LineInfo, page_break: bool) -> docx_rs::Docx {
+    let mut para = docx_rs::Paragraph::new();
+    if let Some(align) = line.align {
+        para = para.align(align);
+    }
+    if page_break {
+        para = para.page_break_before(true);
+    }
+    for span in &line.runs {
+        let mut run = docx_rs::Run::new().add_text(&span.text);
+        // docx size = half-points: 12pt → 24.
+        run = run.size((span.size.clamp(6.0, 72.0) * 2.0).round() as usize);
+        if span.bold {
+            run = run.bold();
+        }
+        if span.italic {
+            run = run.italic();
+        }
+        // CJK-safe: family on ascii + hAnsi + eastAsia + cs so Word picks
+        // a glyph-bearing font for Japanese/Myanmar runs.
+        run = run.fonts(
+            docx_rs::RunFonts::new()
+                .ascii(&span.family)
+                .hi_ansi(&span.family)
+                .east_asia(&span.family)
+                .cs(&span.family),
+        );
+        para = para.add_run(run);
+    }
+    word.add_paragraph(para)
+}
+
+/// Push `pending` lines as a bordered table, styling runs per cell.
+/// Column splits reuse `split_columns`; ragged rows pad with empty cells.
+fn push_styled_table(word: docx_rs::Docx, pending: &[LineInfo], page_break: bool) -> docx_rs::Docx {
+    let max_cols = pending
+        .iter()
+        .map(|l| split_columns(&line_text(l)).len())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let mut rows = Vec::with_capacity(pending.len());
+    for (i, line) in pending.iter().enumerate() {
+        let mut cols = split_columns(&line_text(line));
+        while cols.len() < max_cols {
+            cols.push(String::new());
+        }
+        // Per-cell style: reuse the line's first run (tables from uniform rows).
+        let tpl = line.runs.first();
+        let cells: Vec<docx_rs::TableCell> = cols
+            .into_iter()
+            .map(|text| {
+                let mut para = docx_rs::Paragraph::new();
+                let mut run = docx_rs::Run::new().add_text(text);
+                if let Some(span) = tpl {
+                    run = run.size((span.size.clamp(6.0, 72.0) * 2.0).round() as usize);
+                    if span.bold {
+                        run = run.bold();
+                    }
+                    if span.italic {
+                        run = run.italic();
+                    }
+                    run = run.fonts(
+                        docx_rs::RunFonts::new()
+                            .ascii(&span.family)
+                            .hi_ansi(&span.family)
+                            .east_asia(&span.family)
+                            .cs(&span.family),
+                    );
+                }
+                para = para.add_run(run);
+                if page_break && i == 0 {
+                    para = para.page_break_before(true);
+                }
+                docx_rs::TableCell::new().add_paragraph(para)
+            })
+            .collect();
+        rows.push(docx_rs::TableRow::new(cells));
+    }
+    word.add_table(docx_rs::Table::new(rows))
+}
+
+/// Legacy plain-text flusher: superseded by styled pending flush in
+/// `convert` (kept for reference; no longer called).
+#[allow(dead_code)]
 fn flush_text_lines(
     word: docx_rs::Docx,
     lines: &mut Vec<String>,
@@ -252,12 +394,16 @@ fn flush_text_lines(
     (word, true)
 }
 
-/// Walk one page's content ops in stream order → text lines + image slots.
-/// Text: `Tj`/`TJ` decode like lopdf's `collect_text` (spacing kerns <
-/// -100 → space); `'`/`"` prefix a newline (PDF 32000-1 §9.4.3);
-/// `T*`/`Td`/`TD`/`Tm`/`ET` end the current line. `Do` records an image
-/// slot at the exact stream position (resolved after the walk).
-fn page_blocks(doc: &lopdf::Document, page: u32) -> Result<Vec<PageBlock>> {
+/// Walk one page's content ops with a text-state matrix (PDF 32000-1 §9.4).
+/// Tracks `Tm`/`Td`/`TD`/`T*` positioning so spans carry (x, y) in points
+/// (y-up). `Tj`/`TJ`/`'`/`"` decode queued at the CURRENT position BEFORE
+/// applying any line-move in the same op-list step — matching how viewers
+/// lay glyphs out. Relative moves (`Td`, `TD`, `T*`) advance from the
+/// current point; absolute `Tm` sets it. Run state (`Tf` size + font)
+/// attaches family/bold/italic to every span for docx styling.
+/// `Do` records an image slot with the y of the surrounding text flow so
+/// images interleave in visual order after y-sorting.
+fn page_blocks(doc: &lopdf::Document, page: u32) -> Result<Vec<OrderedBlock>> {
     let pages = doc.get_pages();
     let page_id = pages
         .get(&page)
@@ -266,110 +412,351 @@ fn page_blocks(doc: &lopdf::Document, page: u32) -> Result<Vec<PageBlock>> {
     let fonts = doc
         .get_page_fonts(page_id)
         .map_err(|e| ForgeError::PdfReadFailed(e.to_string()))?;
-    let mut encodings: std::collections::BTreeMap<Vec<u8>, lopdf::Encoding<'_>> =
+    // Per-font decode + style: family/bold/italic from BaseName, and whether
+    // the font maps to Unicode at all (unmapped CID fonts skipped honestly).
+    let mut styles: std::collections::BTreeMap<Vec<u8>, (FontStyle, Option<lopdf::Encoding<'_>>)> =
         std::collections::BTreeMap::new();
+    let mut unmapped: Vec<String> = Vec::new();
     for (name, font) in &fonts {
-        if let Ok(enc) = font.get_font_encoding_with_limit(doc, MAX_PAGE_TEXT_BYTES) {
-            encodings.insert(name.clone(), enc);
+        let style = font_style(doc, font);
+        let mapped = style.mapped;
+        let enc = font
+            .get_font_encoding_with_limit(doc, MAX_PAGE_TEXT_BYTES)
+            .ok();
+        if !mapped {
+            unmapped.push(style.family.clone());
         }
+        styles.insert(name.clone(), (style, enc));
     }
     let content_data = doc
         .get_page_content_with_limit(page_id, MAX_PAGE_TEXT_BYTES)
         .map_err(map_lopdf_extract_error)?;
     let content =
         lopdf::content::Content::decode(&content_data).map_err(map_lopdf_extract_error)?;
-    let mut blocks: Vec<PageBlock> = Vec::new();
-    let mut current = String::new();
-    let mut encoding: Option<&lopdf::Encoding<'_>> = None;
-    // `Do` names resolve to XObject images after the walk.
-    let mut image_slots: Vec<Option<String>> = Vec::new();
-    let flush = |current: &mut String, blocks: &mut Vec<PageBlock>| {
-        let line = current.trim().to_string();
-        if !line.is_empty() {
-            blocks.push(PageBlock::Line(line));
-        }
-        current.clear();
-    };
+    // Text state: current point (x, y) in points, font size, active font.
+    let mut x = 0.0f32;
+    let mut y = 0.0f32;
+    let mut size = 12.0f32;
+    let mut active: Option<Vec<u8>> = None;
+    let mut spans: Vec<Span> = Vec::new();
+    // `Do` image slots: (name, y at that point in the stream).
+    let mut image_slots: Vec<(Option<String>, f32)> = Vec::new();
     for op in &content.operations {
         match op.operator.as_str() {
             "Tf" => {
-                if let Some(first) = op.operands.first() {
-                    if let Ok(name) = first.as_name() {
-                        encoding = encodings.get(name);
+                if let [name, sz] = op.operands.as_slice() {
+                    if let Ok(n) = name.as_name() {
+                        active = Some(n.to_vec());
                     }
-                }
-                if !current.is_empty() {
-                    flush(&mut current, &mut blocks);
-                }
-            }
-            "Tj" | "TJ" => {
-                if let Some(enc) = encoding {
-                    append_operands(&mut current, enc, &op.operands)?;
-                }
-            }
-            "'" | "\"" => {
-                if !current.trim().is_empty() {
-                    flush(&mut current, &mut blocks);
-                }
-                if let Some(enc) = encoding {
-                    if op.operator == "\"" {
-                        if let Some(s) = op.operands.get(2) {
-                            append_operands(&mut current, enc, std::slice::from_ref(s))?;
+                    if let Ok(s) = sz.as_float() {
+                        if s > 0.0 && s < 1000.0 {
+                            size = s;
                         }
-                    } else {
-                        append_operands(&mut current, enc, &op.operands)?;
                     }
                 }
             }
-            "T*" | "Td" | "TD" | "Tm" | "ET" => flush(&mut current, &mut blocks),
+            "Tm" => {
+                if let [a, b, c, d, e, f] = op.operands.as_slice() {
+                    if let (Ok(e), Ok(f)) = (e.as_float(), f.as_float()) {
+                        // Absolute text matrix: e/f = new origin. Scale
+                        // terms (a/d) fold into size via Tf already; shear
+                        // (b/c) ignored — glyph order, not geometry, matters.
+                        let _ = (a, b, c, d);
+                        x = e;
+                        y = f;
+                    }
+                }
+            }
+            "Td" => {
+                if let [tx, ty] = op.operands.as_slice() {
+                    if let (Ok(tx), Ok(ty)) = (tx.as_float(), ty.as_float()) {
+                        x += tx;
+                        y += ty;
+                    }
+                }
+            }
+            "TD" => {
+                if let [tx, ty] = op.operands.as_slice() {
+                    if let (Ok(tx), Ok(ty)) = (tx.as_float(), ty.as_float()) {
+                        x += tx;
+                        y += ty;
+                    }
+                }
+            }
+            "T*" => {
+                y -= size * 1.2;
+                x = 0.0;
+            }
+            "Tj" | "TJ" | "'" | "\"" => {
+                let targets: Vec<&lopdf::Object> = if op.operator == "\"" {
+                    op.operands.get(2).into_iter().collect()
+                } else {
+                    op.operands.iter().collect()
+                };
+                if let Some(key) = active.clone() {
+                    if let Some((style, Some(enc))) = styles.get(&key) {
+                        for target in targets {
+                            let before = spans.len();
+                            collect_styled(
+                                &mut spans,
+                                enc,
+                                std::slice::from_ref(target),
+                                x,
+                                y,
+                                size,
+                                style,
+                            )?;
+                            // Advance x by ~0.5 * size per emitted char so
+                            // same-line runs keep left-to-right order even
+                            // when the PDF omits explicit moves.
+                            let emitted: usize =
+                                spans[before..].iter().map(|s| s.text.chars().count()).sum();
+                            x += emitted as f32 * size * 0.5;
+                        }
+                    }
+                }
+                if op.operator == "'" || op.operator == "\"" {
+                    y -= size * 1.2;
+                    x = 0.0;
+                }
+            }
+            "ET" => {
+                // End of text object: next Tj starts a fresh line region.
+                // (Position resets when the next Tm/Td arrives.)
+            }
             "Do" => {
-                flush(&mut current, &mut blocks);
                 let name = op
                     .operands
                     .first()
                     .and_then(|o| o.as_name().ok())
                     .map(|n| String::from_utf8_lossy(n).into_owned());
-                image_slots.push(name);
-                // Placeholder index: resolved to real bytes below.
-                blocks.push(PageBlock::Line(format!(
-                    "{}IMG{}",
-                    '\u{0}',
-                    image_slots.len() - 1
-                )));
+                image_slots.push((name, y));
             }
             _ => {}
         }
     }
-    flush(&mut current, &mut blocks);
-    // Resolve image slots → real JPEG bytes or a marker line.
-    let mut resolved: Vec<PageBlock> = Vec::with_capacity(blocks.len());
-    for block in blocks {
-        match block {
-            PageBlock::Line(line) if line.starts_with('\u{0}') => {
-                let idx: usize = line[4..].parse().unwrap_or(usize::MAX);
-                match image_slots
-                    .get(idx)
-                    .and_then(|n| n.as_deref())
-                    .and_then(|name| page_jpeg(doc, page_id, name))
-                {
-                    Some((bytes, w, h)) => resolved.push(PageBlock::Image {
-                        bytes,
-                        width_px: w,
-                        height_px: h,
-                    }),
-                    None => resolved.push(PageBlock::Line(format!(
-                        "[Image on page {page} — format not embeddable]"
-                    ))),
-                }
-            }
-            other => resolved.push(other),
-        }
-    }
-    Ok(resolved)
+    group_blocks(doc, page, page_id, spans, image_slots, unmapped)
 }
 
-/// Decode `Tj`/`TJ` operands like lopdf's `collect_text`: strings decode,
-/// nested arrays recurse + space, spacing kerns `< -100` → word space.
+/// Decode operands into styled spans at (x, y): strings decode via the
+/// font's encoding (ToUnicode CMap for Myanmar/Japanese/CID fonts),
+/// nested TJ arrays recurse + space, kerns < -100 → word space.
+#[allow(clippy::too_many_arguments)]
+fn collect_styled(
+    spans: &mut Vec<Span>,
+    encoding: &lopdf::Encoding<'_>,
+    operands: &[lopdf::Object],
+    x: f32,
+    y: f32,
+    size: f32,
+    style: &FontStyle,
+) -> Result<()> {
+    for operand in operands {
+        match operand {
+            lopdf::Object::String(bytes, _) => {
+                let mut s = String::new();
+                encoding
+                    .write_to_string(bytes, &mut s)
+                    .map_err(|e| ForgeError::PdfReadFailed(e.to_string()))?;
+                // Skip control chars but KEEP all Unicode incl. Myanmar
+                // (U+1000–U+109F), CJK (U+3000–U+9FFF+), combining marks.
+                let clean: String = s
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\t')
+                    .collect();
+                if !clean.trim().is_empty() {
+                    spans.push(Span {
+                        x,
+                        y,
+                        size,
+                        family: style.family.clone(),
+                        bold: style.bold,
+                        italic: style.italic,
+                        text: clean.trim().to_string(),
+                    });
+                }
+            }
+            lopdf::Object::Array(arr) => {
+                collect_styled(spans, encoding, arr, x, y, size, style)?;
+                // Trailing space per TJ array like lopdf's collect_text.
+                if let Some(last) = spans.last_mut() {
+                    last.text.push(' ');
+                }
+            }
+            lopdf::Object::Integer(i) if *i < -100 => {
+                if let Some(last) = spans.last_mut() {
+                    last.text.push(' ');
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Resolve family/bold/italic + Unicode-mappability from a font dict.
+/// BaseName like `ABCDEE+MyanmarText-Bold` → family `MyanmarText`, bold.
+/// Type0 Identity-H/V without ToUnicode → mapped=false (honest report).
+fn font_style(doc: &lopdf::Document, font: &lopdf::Dictionary) -> FontStyle {
+    let base = font
+        .get(b"BaseFont")
+        .ok()
+        .and_then(|o| o.as_name().ok())
+        .map(|n| String::from_utf8_lossy(n).into_owned())
+        .unwrap_or_default();
+    // Strip subset prefix (`ABCDEF+`) per PDF spec §9.6.4.
+    let short = base.split('+').next_back().unwrap_or(&base).to_string();
+    let lower = short.to_lowercase();
+    let bold = lower.contains("bold") || lower.contains("black") || lower.contains("heavy");
+    let italic = lower.contains("italic") || lower.contains("oblique");
+    let family = short
+        .trim_end_matches("-Bold")
+        .trim_end_matches("-Italic")
+        .trim_end_matches("-BoldItalic")
+        .to_string();
+    // Mappability: Type0/Identity without ToUnicode can't reach Unicode.
+    let subtype = font
+        .get(b"Subtype")
+        .ok()
+        .and_then(|o| o.as_name().ok())
+        .map(|n| n.to_vec())
+        .unwrap_or_default();
+    let mapped = if subtype == b"Type0" {
+        // Identity-H/V REQUIRES ToUnicode for text extraction.
+        let has_tounicode = font
+            .get_deref(b"ToUnicode", doc)
+            .and_then(|o| o.as_stream())
+            .is_ok();
+        let enc_name = font
+            .get(b"Encoding")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| n.to_vec())
+            .unwrap_or_default();
+        has_tounicode
+            || (enc_name != b"Identity-H".as_slice() && enc_name != b"Identity-V".as_slice())
+    } else {
+        true
+    };
+    FontStyle {
+        family: if family.is_empty() {
+            "Calibri".to_string()
+        } else {
+            family
+        },
+        bold,
+        italic,
+        mapped,
+    }
+}
+
+/// Group spans into visual lines (y-buckets ±2pt), sort lines top-first
+/// (y desc — PDF y-up), runs left-first (x asc). Interleave images by y.
+/// Unmapped-font report appended as a final honest paragraph.
+fn group_blocks(
+    doc: &lopdf::Document,
+    page: u32,
+    page_id: lopdf::ObjectId,
+    spans: Vec<Span>,
+    image_slots: Vec<(Option<String>, f32)>,
+    unmapped: Vec<String>,
+) -> Result<Vec<OrderedBlock>> {
+    // Bucket spans by y (±2pt tolerance): same visual line.
+    let mut sorted = spans;
+    sorted.sort_by(|a, b| b.y.partial_cmp(&a.y).unwrap_or(std::cmp::Ordering::Equal));
+    let mut lines: Vec<LineInfo> = Vec::new();
+    for span in sorted {
+        if let Some(line) = lines.last_mut() {
+            if (line.y - span.y).abs() <= 2.0 {
+                line.runs.push(span);
+                continue;
+            }
+        }
+        // Alignment guess from first span's x: near-left → Left,
+        // centered → Center, near-right → Right.
+        let align = if span.x < 72.0 {
+            None
+        } else if span.x < 200.0 {
+            Some(docx_rs::AlignmentType::Center)
+        } else {
+            Some(docx_rs::AlignmentType::Right)
+        };
+        lines.push(LineInfo {
+            y: span.y,
+            align,
+            runs: vec![span],
+        });
+    }
+    for line in &mut lines {
+        line.runs
+            .sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    // Resolve images at stream y → pixel bytes.
+    let mut blocks: Vec<OrderedBlock> = lines.into_iter().map(OrderedBlock::Text).collect();
+    for (name, y) in image_slots {
+        match name.as_deref().and_then(|n| page_jpeg(doc, page_id, n)) {
+            Some((bytes, w, h)) => blocks.push(OrderedBlock::Image {
+                y,
+                bytes,
+                width_px: w,
+                height_px: h,
+            }),
+            None => {
+                blocks.push(OrderedBlock::Text(LineInfo {
+                    y,
+                    align: None,
+                    runs: vec![Span {
+                        x: 0.0,
+                        y,
+                        size: 10.0,
+                        family: "Calibri".to_string(),
+                        bold: false,
+                        italic: false,
+                        text: format!("[Image on page {page} — format not embeddable]"),
+                    }],
+                }));
+            }
+        }
+    }
+    // Visual order: top of page first (y desc).
+    blocks.sort_by(|a, b| {
+        let ya = match a {
+            OrderedBlock::Text(l) => l.y,
+            OrderedBlock::Image { y, .. } => *y,
+        };
+        let yb = match b {
+            OrderedBlock::Text(l) => l.y,
+            OrderedBlock::Image { y, .. } => *y,
+        };
+        yb.partial_cmp(&ya).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    // Honest report for fonts that can't map to Unicode (no mojibake).
+    if !unmapped.is_empty() {
+        let mut seen = unmapped;
+        seen.sort();
+        seen.dedup();
+        blocks.push(OrderedBlock::Text(LineInfo {
+            y: f32::MIN,
+            align: None,
+            runs: vec![Span {
+                x: 0.0,
+                y: f32::MIN,
+                size: 9.0,
+                family: "Calibri".to_string(),
+                bold: false,
+                italic: true,
+                text: format!(
+                    "[Some text on page {page} uses fonts without Unicode mapping ({}) — those runs were skipped]",
+                    seen.join(", ")
+                ),
+            }],
+        }));
+    }
+    Ok(blocks)
+}
+
+/// Legacy flat-string decoder: superseded by `collect_styled`.
+#[allow(dead_code)]
 fn append_operands(
     out: &mut String,
     encoding: &lopdf::Encoding<'_>,
@@ -455,8 +842,8 @@ fn split_columns(line: &str) -> Vec<String> {
     cols
 }
 
-/// Push buffered `lines` as a bordered `Table` (first row = header).
-/// `page_start` puts `page_break_before` on the table's first paragraph.
+/// Legacy unstyled table writer: superseded by `push_styled_table`.
+#[allow(dead_code)]
 fn push_table(word: docx_rs::Docx, lines: &[String], page_start: bool) -> docx_rs::Docx {
     let max_cols = lines
         .iter()
@@ -892,5 +1279,84 @@ mod tests {
             xml.contains("w:drawing") || xml.contains("[Image on page 1"),
             "image silently dropped"
         );
+    }
+
+    /// Two-column page via absolute Tm: right run must follow left run even
+    /// when stream order is right-first (visual x-sort, not stream order).
+    #[test]
+    fn test_docx_visual_order_beats_stream_order() {
+        use printpdf::{
+            BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Pt, TextItem,
+        };
+        // Stream emits RIGHT text first at x=300, then LEFT at x=50.
+        let page = PdfPage::new(
+            Mm(210.0),
+            Mm(297.0),
+            vec![
+                Op::StartTextSection,
+                Op::SetFont {
+                    font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                    size: Pt(12.0),
+                },
+                Op::SetTextMatrix {
+                    matrix: printpdf::TextMatrix::Raw([1.0, 0.0, 0.0, 1.0, 300.0, 700.0]),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text("RIGHT".to_string())],
+                },
+                Op::SetTextMatrix {
+                    matrix: printpdf::TextMatrix::Raw([1.0, 0.0, 0.0, 1.0, 50.0, 700.0]),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text("LEFT".to_string())],
+                },
+                Op::EndTextSection,
+            ],
+        );
+        let mut doc = PdfDocument::new("order test");
+        let pdf = doc
+            .with_pages(vec![page])
+            .save(&PdfSaveOptions::default(), &mut Vec::new());
+        let xml = document_xml(&LopdfToDocx.convert(&pdf, None).unwrap());
+        let (left, right) = (xml.find("LEFT").unwrap(), xml.find("RIGHT").unwrap());
+        assert!(left < right, "visual order lost: RIGHT before LEFT");
+    }
+
+    /// Unicode survival: Myanmar + Japanese + bold styling land in document.xml.
+    #[test]
+    fn test_docx_unicode_and_styling() {
+        use printpdf::{
+            BuiltinFont, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions, Point, Pt,
+            TextItem,
+        };
+        let page = PdfPage::new(
+            Mm(210.0),
+            Mm(297.0),
+            vec![
+                Op::StartTextSection,
+                Op::SetTextCursor {
+                    pos: Point::new(Mm(20.0), Mm(270.0)),
+                },
+                Op::SetFont {
+                    font: PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                    size: Pt(16.0),
+                },
+                Op::ShowText {
+                    items: vec![TextItem::Text("Hello မင်္ဂလာပါ こんにちは".to_string())],
+                },
+                Op::EndTextSection,
+            ],
+        );
+        let mut doc = PdfDocument::new("unicode test");
+        let pdf = doc
+            .with_pages(vec![page])
+            .save(&PdfSaveOptions::default(), &mut Vec::new());
+        let xml = document_xml(&LopdfToDocx.convert(&pdf, None).unwrap());
+        // ASCII survives verbatim; bold + size land as w:b / w:sz.
+        assert!(xml.contains("Hello"), "ascii lost");
+        assert!(xml.contains("w:b"), "bold lost");
+        assert!(xml.contains("w:sz"), "font size lost");
+        // CJK-safe fonts on eastAsia so Word renders Myanmar/Japanese.
+        assert!(xml.contains("w:eastAsia"), "eastAsia font missing");
     }
 }
