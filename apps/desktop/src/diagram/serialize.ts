@@ -49,12 +49,70 @@ function shapeSvg(el: DiagramElement): string {
     const { body, top } = cylinderPaths(el.x, el.y, el.w, el.h);
     return `<path d="${body}" ${common}/><path d="${top}" ${common}/>`;
   }
-  if (base === "text") return "";
+  if (base === "actor") return actorSvg(el, common);
+  if (base === "useCase") {
+    return `<ellipse cx="${num(el.x + el.w / 2)}" cy="${num(el.y + el.h / 2)}" rx="${num(el.w / 2)}" ry="${num(el.h / 2)}" ${common}/>`;
+  }
+  if (base === "class") return classSvg(el, common);
+  if (base === "package") return packageSvg(el, common);
+  if (base === "note") return noteSvg(el, common);
+  if (base === "table") return tableSvg(el, common);
+  if (base === "column" || base === "key") {
+    return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" ${common}/>`;
+  }
+  if (base === "fkLink") return "";
   if (base === "rounded") {
     const rad = el.radius ?? 10;
     return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" rx="${num(rad)}" ${common}/>`;
   }
   return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" ${common}/>`;
+}
+
+/** UML stick-figure actor (head circle + limb path). */
+function actorSvg(el: DiagramElement, common: string): string {
+  const cx = el.x + el.w / 2;
+  const r = Math.min(el.w, el.h) * 0.11;
+  const hy = el.y + el.h * 0.16;
+  const y1 = el.y + el.h * 0.27;
+  const y2 = el.y + el.h * 0.55;
+  const limbs =
+    `M ${num(cx)} ${num(y1)} V ${num(y2)} ` +
+    `M ${num(el.x + el.w * 0.2)} ${num(el.y + el.h * 0.38)} H ${num(el.x + el.w * 0.8)} ` +
+    `M ${num(cx)} ${num(y2)} L ${num(el.x + el.w * 0.25)} ${num(el.y + el.h * 0.8)} ` +
+    `M ${num(cx)} ${num(y2)} L ${num(el.x + el.w * 0.75)} ${num(el.y + el.h * 0.8)}`;
+  return `<circle cx="${num(cx)}" cy="${num(hy)}" r="${num(r)}" ${common}/>` +
+    `<path d="${limbs}" fill="none" ${common} stroke-linecap="round"/>`;
+}
+
+/** UML class: rect + 2 compartment dividers. */
+function classSvg(el: DiagramElement, common: string): string {
+  const y1 = el.y + el.h * 0.3;
+  const y2 = el.y + el.h * 0.55;
+  return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" ${common}/>` +
+    `<line x1="${num(el.x)}" y1="${num(y1)}" x2="${num(el.x + el.w)}" y2="${num(y1)}" stroke="${el.stroke}" stroke-width="1.5"/>` +
+    `<line x1="${num(el.x)}" y1="${num(y2)}" x2="${num(el.x + el.w)}" y2="${num(y2)}" stroke="${el.stroke}" stroke-width="1.5"/>`;
+}
+
+/** UML package: tab + body. */
+function packageSvg(el: DiagramElement, common: string): string {
+  const tabH = el.h * 0.16;
+  return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w * 0.35)}" height="${num(tabH)}" ${common}/>` +
+    `<rect x="${num(el.x)}" y="${num(el.y + tabH)}" width="${num(el.w)}" height="${num(el.h * 0.84)}" ${common}/>`;
+}
+
+/** UML note: rect with folded corner. */
+function noteSvg(el: DiagramElement, common: string): string {
+  const fx = el.x + el.w - 14;
+  const fy = el.y + 14;
+  return `<path d="M ${num(el.x)} ${num(el.y)} H ${num(fx)} L ${num(el.x + el.w)} ${num(fy)} V ${num(el.y + el.h)} H ${num(el.x)} Z" ${common}/>` +
+    `<path d="M ${num(fx)} ${num(el.y)} V ${num(fy)} H ${num(el.x + el.w)}" fill="none" ${common}/>`;
+}
+
+/** ER table: body + filled header bar. */
+function tableSvg(el: DiagramElement, common: string): string {
+  const hh = Math.min(30, el.h * 0.28);
+  return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" ${common}/>` +
+    `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(hh)}" fill="${el.stroke}" opacity="${0.85 * el.opacity}"/>`;
 }
 
 function textSvg(el: DiagramElement): string {

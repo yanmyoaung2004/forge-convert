@@ -26,7 +26,7 @@ const ids = new Set([newId("el"), newId("el"), newId("conn")]);
 check("ids unique", ids.size === 3);
 
 // Registry: 18 kinds, developer types present
-check("registry has 18", ELEMENTS.length === 18);
+check("registry has 27", ELEMENTS.length === 27);
 check("registry has api/db", ELEMENTS.some((e) => e.kind === "api") && ELEMENTS.some((e) => e.kind === "database"));
 check("baseOf api is rounded", baseOf("api") === "rounded");
 check("diamond points", diamondPoints(0, 0, 100, 60).split(" ").length === 4);

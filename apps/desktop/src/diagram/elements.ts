@@ -8,7 +8,9 @@ export interface ElementDef {
   kind: ElementKind;
   label: string;
   /** SVG primitive used for rendering/export. */
-  base: "rect" | "rounded" | "circle" | "ellipse" | "diamond" | "text" | "cylinder";
+  base: "rect" | "rounded" | "circle" | "ellipse" | "diamond" | "text" | "cylinder" | "actor" | "useCase" | "class" | "package" | "note" | "table" | "key" | "column" | "fkLink";
+  /** Palette section. */
+  group: "shapes" | "developer" | "uml" | "er";
   w: number;
   h: number;
   fill: string;
@@ -21,26 +23,36 @@ export interface ElementDef {
 const BRAND = "#e86a2c";
 const INK = "#1c1917";
 const LINE = "#78716c";
-
 export const ELEMENTS: ElementDef[] = [
-  { kind: "rect", label: "Rectangle", base: "rect", w: 140, h: 80, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
-  { kind: "rounded", label: "Rounded", base: "rounded", w: 140, h: 80, fill: "#ffffff", stroke: INK, strokeWidth: 2, radius: 12 },
-  { kind: "circle", label: "Circle", base: "circle", w: 100, h: 100, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
-  { kind: "ellipse", label: "Ellipse", base: "ellipse", w: 150, h: 90, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
-  { kind: "diamond", label: "Diamond", base: "diamond", w: 140, h: 100, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
-  { kind: "text", label: "Text", base: "text", w: 160, h: 40, fill: "transparent", stroke: "none", strokeWidth: 0, fontSize: 16 },
-  { kind: "input", label: "Input", base: "rounded", w: 150, h: 70, fill: "#e8f0fe", stroke: "#2563eb", strokeWidth: 2, radius: 10 },
-  { kind: "output", label: "Output", base: "rounded", w: 150, h: 70, fill: "#e6f4ea", stroke: "#15803d", strokeWidth: 2, radius: 10 },
-  { kind: "process", label: "Process", base: "rect", w: 150, h: 80, fill: "#fef7e0", stroke: "#b7791f", strokeWidth: 2 },
-  { kind: "database", label: "Database", base: "cylinder", w: 150, h: 100, fill: "#f3e8fd", stroke: "#7c3aed", strokeWidth: 2 },
-  { kind: "server", label: "Server", base: "rect", w: 150, h: 90, fill: "#e8f0fe", stroke: "#1a73e8", strokeWidth: 2 },
-  { kind: "api", label: "API", base: "rounded", w: 150, h: 70, fill: "#fdeede", stroke: BRAND, strokeWidth: 2, radius: 12 },
-  { kind: "client", label: "Client", base: "rounded", w: 140, h: 80, fill: "#e0f2f1", stroke: "#00796b", strokeWidth: 2, radius: 12 },
-  { kind: "cloud", label: "Cloud", base: "ellipse", w: 160, h: 90, fill: "#f1f8ff", stroke: "#4285f4", strokeWidth: 2 },
-  { kind: "queue", label: "Queue", base: "rect", w: 150, h: 70, fill: "#fff8e1", stroke: "#f9ab00", strokeWidth: 2 },
-  { kind: "user", label: "User", base: "circle", w: 90, h: 90, fill: "#fce4ec", stroke: "#c2185b", strokeWidth: 2 },
-  { kind: "document", label: "Document", base: "rect", w: 130, h: 90, fill: "#ffffff", stroke: LINE, strokeWidth: 2 },
-  { kind: "storage", label: "Storage", base: "cylinder", w: 150, h: 90, fill: "#ede7f6", stroke: "#4527a0", strokeWidth: 2 },
+  { kind: "rect", group: "shapes", label: "Rectangle", base: "rect", w: 140, h: 80, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
+  { kind: "rounded", group: "shapes", label: "Rounded", base: "rounded", w: 140, h: 80, fill: "#ffffff", stroke: INK, strokeWidth: 2, radius: 12 },
+  { kind: "circle", group: "shapes", label: "Circle", base: "circle", w: 100, h: 100, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
+  { kind: "ellipse", group: "shapes", label: "Ellipse", base: "ellipse", w: 150, h: 90, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
+  { kind: "diamond", group: "shapes", label: "Diamond", base: "diamond", w: 140, h: 100, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
+  { kind: "text", group: "shapes", label: "Text", base: "text", w: 160, h: 40, fill: "transparent", stroke: "none", strokeWidth: 0, fontSize: 16 },
+  { kind: "input", group: "developer", label: "Input", base: "rounded", w: 150, h: 70, fill: "#e8f0fe", stroke: "#2563eb", strokeWidth: 2, radius: 10 },
+  { kind: "output", group: "developer", label: "Output", base: "rounded", w: 150, h: 70, fill: "#e6f4ea", stroke: "#15803d", strokeWidth: 2, radius: 10 },
+  { kind: "process", group: "developer", label: "Process", base: "rect", w: 150, h: 80, fill: "#fef7e0", stroke: "#b7791f", strokeWidth: 2 },
+  { kind: "database", group: "developer", label: "Database", base: "cylinder", w: 150, h: 100, fill: "#f3e8fd", stroke: "#7c3aed", strokeWidth: 2 },
+  { kind: "server", group: "developer", label: "Server", base: "rect", w: 150, h: 90, fill: "#e8f0fe", stroke: "#1a73e8", strokeWidth: 2 },
+  { kind: "api", group: "developer", label: "API", base: "rounded", w: 150, h: 70, fill: "#fdeede", stroke: BRAND, strokeWidth: 2, radius: 12 },
+  { kind: "client", group: "developer", label: "Client", base: "rounded", w: 140, h: 80, fill: "#e0f2f1", stroke: "#00796b", strokeWidth: 2, radius: 12 },
+  { kind: "cloud", group: "developer", label: "Cloud", base: "ellipse", w: 160, h: 90, fill: "#f1f8ff", stroke: "#4285f4", strokeWidth: 2 },
+  { kind: "queue", group: "developer", label: "Queue", base: "rect", w: 150, h: 70, fill: "#fff8e1", stroke: "#f9ab00", strokeWidth: 2 },
+  { kind: "user", group: "developer", label: "User", base: "circle", w: 90, h: 90, fill: "#fce4ec", stroke: "#c2185b", strokeWidth: 2 },
+  { kind: "document", group: "developer", label: "Document", base: "rect", w: 130, h: 90, fill: "#ffffff", stroke: LINE, strokeWidth: 2 },
+  { kind: "storage", group: "developer", label: "Storage", base: "cylinder", w: 150, h: 90, fill: "#ede7f6", stroke: "#4527a0", strokeWidth: 2 },
+  // UML (class + use-case essentials; simple SVG, same styling pipeline).
+  { kind: "umlClass", group: "uml", label: "Class", base: "class", w: 170, h: 120, fill: "#ffffff", stroke: INK, strokeWidth: 2, fontSize: 13 },
+  { kind: "umlActor", group: "uml", label: "Actor", base: "actor", w: 90, h: 130, fill: "#ffffff", stroke: INK, strokeWidth: 2, fontSize: 12 },
+  { kind: "umlUseCase", group: "uml", label: "Use Case", base: "useCase", w: 170, h: 80, fill: "#ffffff", stroke: INK, strokeWidth: 2 },
+  { kind: "umlPackage", group: "uml", label: "Package", base: "package", w: 170, h: 110, fill: "#fffdf9", stroke: INK, strokeWidth: 2 },
+  { kind: "umlNote", group: "uml", label: "Note", base: "note", w: 150, h: 90, fill: "#fef9c3", stroke: "#a16207", strokeWidth: 2 },
+  // ERD (table + columns + key + FK edge styling via connections).
+  { kind: "erTable", group: "er", label: "users", base: "table", w: 190, h: 130, fill: "#ffffff", stroke: "#1e3a8a", strokeWidth: 2, fontSize: 13 },
+  { kind: "erColumn", group: "er", label: "id : INT", base: "column", w: 190, h: 30, fill: "#eff6ff", stroke: "#93c5fd", strokeWidth: 1, fontSize: 12 },
+  { kind: "erKey", group: "er", label: "PK", base: "key", w: 60, h: 30, fill: "#fef3c7", stroke: "#d97706", strokeWidth: 2, fontSize: 12 },
+  { kind: "erFk", group: "er", label: "FK", base: "fkLink", w: 120, h: 30, fill: "transparent", stroke: "none", strokeWidth: 0, fontSize: 12 },
 ];
 
 export function defOf(kind: ElementKind): ElementDef {

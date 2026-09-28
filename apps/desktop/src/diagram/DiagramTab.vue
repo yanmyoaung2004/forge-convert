@@ -442,7 +442,7 @@ onMounted(() => {
       <aside class="library" aria-label="Element library">
         <h4>Shapes</h4>
         <div
-          v-for="d in ELEMENTS.filter((e) => ['rect', 'rounded', 'circle', 'ellipse', 'diamond', 'text'].includes(e.kind))"
+          v-for="d in ELEMENTS.filter((e) => e.group === 'shapes')"
           :key="d.kind"
           class="pal"
           draggable="true"
@@ -454,7 +454,33 @@ onMounted(() => {
         </div>
         <h4>Developer</h4>
         <div
-          v-for="d in ELEMENTS.filter((e) => !['rect', 'rounded', 'circle', 'ellipse', 'diamond', 'text'].includes(e.kind))"
+          v-for="d in ELEMENTS.filter((e) => e.group === 'developer')"
+          :key="d.kind"
+          class="pal"
+          draggable="true"
+          :title="`Drag ${d.label} onto canvas (or click to add)`"
+          @dragstart="onPalDrag($event, d.kind)"
+          @click="addAtCenter(d.kind)"
+        >
+          <span class="swatch" :style="{ background: d.fill, borderColor: d.stroke }" />
+          {{ d.label }}
+        </div>
+        <h4>UML</h4>
+        <div
+          v-for="d in ELEMENTS.filter((e) => e.group === 'uml')"
+          :key="d.kind"
+          class="pal"
+          draggable="true"
+          :title="`Drag ${d.label} onto canvas (or click to add)`"
+          @dragstart="onPalDrag($event, d.kind)"
+          @click="addAtCenter(d.kind)"
+        >
+          <span class="swatch" :style="{ background: d.fill, borderColor: d.stroke }" />
+          {{ d.label }}
+        </div>
+        <h4>ERD</h4>
+        <div
+          v-for="d in ELEMENTS.filter((e) => e.group === 'er')"
           :key="d.kind"
           class="pal"
           draggable="true"

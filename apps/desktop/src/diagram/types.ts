@@ -23,8 +23,16 @@ export type ElementKind =
   | "queue"
   | "user"
   | "document"
-  | "storage";
-
+  | "storage"
+  | "umlClass"
+  | "umlActor"
+  | "umlUseCase"
+  | "umlPackage"
+  | "umlNote"
+  | "erTable"
+  | "erColumn"
+  | "erKey"
+  | "erFk";
 /** Text alignment inside an element. */
 export type TextAlign = "left" | "center" | "right";
 

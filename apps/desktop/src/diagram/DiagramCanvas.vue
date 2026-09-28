@@ -268,6 +268,8 @@ const KNOWN_KINDS = new Set([
   "rect", "rounded", "circle", "ellipse", "diamond", "text",
   "input", "output", "process", "database", "server", "api",
   "client", "cloud", "queue", "user", "document", "storage",
+  "umlClass", "umlActor", "umlUseCase", "umlPackage", "umlNote",
+  "erTable", "erColumn", "erKey", "erFk",
 ]);
 
 function onDrop(e: DragEvent): void {
@@ -427,6 +429,96 @@ defineExpose({ setTool, tool });
             :opacity="el.opacity"
           />
         </g>
+        <!-- UML actor: head + body + limbs (stick figure). -->
+        <g v-else-if="baseOf(el.type) === 'actor'">
+          <circle
+            :cx="el.x + el.w / 2" :cy="el.y + el.h * 0.16" :r="Math.min(el.w, el.h) * 0.11"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+          <path
+            :d="`M ${el.x + el.w / 2} ${el.y + el.h * 0.27} V ${el.y + el.h * 0.55} M ${el.x + el.w * 0.2} ${el.y + el.h * 0.38} H ${el.x + el.w * 0.8} M ${el.x + el.w / 2} ${el.y + el.h * 0.55} L ${el.x + el.w * 0.25} ${el.y + el.h * 0.8} M ${el.x + el.w / 2} ${el.y + el.h * 0.55} L ${el.x + el.w * 0.75} ${el.y + el.h * 0.8}`"
+            fill="none" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity" stroke-linecap="round"
+          />
+        </g>
+        <!-- UML use case: ellipse shell (label overlays via shared text). -->
+        <ellipse
+          v-else-if="baseOf(el.type) === 'useCase'"
+          :cx="el.x + el.w / 2" :cy="el.y + el.h / 2" :rx="el.w / 2" :ry="el.h / 2"
+          :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+          :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+          :opacity="el.opacity"
+        />
+        <!-- UML class: header divider + mid divider (3 compartments). -->
+        <g v-else-if="baseOf(el.type) === 'class'">
+          <rect
+            :x="el.x" :y="el.y" :width="el.w" :height="el.h"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+          <line :x1="el.x" :y1="el.y + el.h * 0.3" :x2="el.x + el.w" :y2="el.y + el.h * 0.3" :stroke="el.stroke" :stroke-width="1.5 / zoom" />
+          <line :x1="el.x" :y1="el.y + el.h * 0.55" :x2="el.x + el.w" :y2="el.y + el.h * 0.55" :stroke="el.stroke" :stroke-width="1.5 / zoom" />
+        </g>
+        <!-- UML package: tab + body. -->
+        <g v-else-if="baseOf(el.type) === 'package'">
+          <rect
+            :x="el.x" :y="el.y" :width="el.w * 0.35" :height="el.h * 0.16"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+          <rect
+            :x="el.x" :y="el.y + el.h * 0.16" :width="el.w" :height="el.h * 0.84"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+        </g>
+        <!-- UML note: rect with folded corner. -->
+        <g v-else-if="baseOf(el.type) === 'note'">
+          <path
+            :d="`M ${el.x} ${el.y} H ${el.x + el.w - 14} L ${el.x + el.w} ${el.y + 14} V ${el.y + el.h} H ${el.x} Z`"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+          <path
+            :d="`M ${el.x + el.w - 14} ${el.y} V ${el.y + 14} H ${el.x + el.w}`"
+            fill="none" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="1.5 / zoom"
+          />
+        </g>
+        <!-- ER table: header bar + body (columns are separate row elements). -->
+        <g v-else-if="baseOf(el.type) === 'table'">
+          <rect
+            :x="el.x" :y="el.y" :width="el.w" :height="el.h"
+            :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+            :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+            :opacity="el.opacity"
+          />
+          <rect
+            :x="el.x" :y="el.y" :width="el.w" :height="Math.min(30, el.h * 0.28)"
+            :fill="el.stroke" :opacity="0.85 * el.opacity"
+          />
+        </g>
+        <!-- ER column row / key badge: simple shells, label carries meaning. -->
+        <rect
+          v-else-if="baseOf(el.type) === 'column' || baseOf(el.type) === 'key'"
+          :x="el.x" :y="el.y" :width="el.w" :height="el.h"
+          :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke"
+          :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
+          :opacity="el.opacity"
+        />
+        <!-- FK link: invisible box (label + connection do the work). -->
+        <rect
+          v-else-if="baseOf(el.type) === 'fkLink'"
+          :x="el.x" :y="el.y" :width="el.w" :height="el.h"
+          fill="transparent" stroke="none" :opacity="el.opacity"
+        />
         <text
           :x="el.align === 'left' ? el.x + 8 : el.align === 'right' ? el.x + el.w - 8 : el.x + el.w / 2"
           :y="el.y + el.h / 2"
@@ -435,7 +527,6 @@ defineExpose({ setTool, tool });
           :font-size="el.fontSize"
           :font-weight="el.fontWeight"
           :fill="el.textColor"
-          style="pointer-events: none; user-select: none"
         >
           <tspan v-for="(ln, i) in el.label.split('\n')" :key="i" :x="el.align === 'left' ? el.x + 8 : el.align === 'right' ? el.x + el.w - 8 : el.x + el.w / 2" :dy="i === 0 ? -((el.label.split('\n').length - 1) * el.fontSize * 0.625) : el.fontSize * 1.25" :text-anchor="el.align === 'left' ? 'start' : el.align === 'right' ? 'end' : 'middle'">{{ ln }}</tspan>
         </text>
