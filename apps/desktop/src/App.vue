@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import DiagramTab from "./diagram/DiagramTab.vue";
 import {
   api,
   isCommandError,
@@ -39,7 +40,7 @@ const result = ref<ConvertDone | null>(null);
 const error = ref<string | null>(null);
 const backendError = ref<string | null>(null);
 const history = ref<HistoryRow[]>([]);
-const tab = ref<"convert" | "pdf" | "history">("convert");
+const tab = ref<"convert" | "pdf" | "diagram" | "history">("convert");
 // -- PDF tab state (backend authoritative; TS holds no business logic) -----
 const pdfFile = ref<string | null>(null);
 const pdfPages = ref<number | null>(null);
@@ -336,6 +337,7 @@ onMounted(() => {
       <nav class="tabs" role="tablist">
         <button :class="{ active: tab === 'convert' }" role="tab" @click="tab = 'convert'">Convert</button>
         <button :class="{ active: tab === 'pdf' }" role="tab" @click="tab = 'pdf'">PDF</button>
+        <button :class="{ active: tab === 'diagram' }" role="tab" @click="tab = 'diagram'">Diagram</button>
         <button :class="{ active: tab === 'history' }" role="tab" @click="tab = 'history'">History</button>
       </nav>
     </header>
@@ -544,6 +546,10 @@ onMounted(() => {
           📄 {{ fileName(pdfResult) }}
         </button>
       </div>
+    </section>
+
+    <section v-if="tab === 'diagram'" class="diagram-wrap">
+      <DiagramTab />
     </section>
 
     <section v-else-if="!backendError" class="panel">

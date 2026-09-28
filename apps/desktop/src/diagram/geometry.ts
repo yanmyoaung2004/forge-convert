@@ -8,9 +8,10 @@ export interface Pt {
   y: number;
 }
 
+/** View transform state (pan offset in screen px + zoom). */
 export interface View {
-  x: number;
-  y: number;
+  panX: number;
+  panY: number;
   zoom: number;
 }
 
@@ -22,14 +23,7 @@ export function screenToWorld(sx: number, sy: number, rect: DOMRect, view: View)
   };
 }
 
-/** View transform state (pan offset in screen px + zoom). */
-export interface ViewState {
-  panX: number;
-  panY: number;
-  zoom: number;
-}
-
-export function worldToScreen(wx: number, wy: number, view: ViewState): Pt {
+export function worldToScreen(wx: number, wy: number, view: View): Pt {
   return { x: wx * view.zoom + view.panX, y: wy * view.zoom + view.panY };
 }
 

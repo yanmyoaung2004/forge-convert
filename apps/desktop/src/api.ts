@@ -172,6 +172,12 @@ export const api = {
     }),
   /** Total PDF pages (drives the desktop page-count line). */
   pdfPageCount: (input: string) => invoke<number>("pdf_page_count", { input }),
+  /** Save diagram project JSON (atomic write, Rust moves bytes). */
+  saveDiagram: (path: string, json: string) => invoke<string>("save_diagram", { args: { path, json } }),
+  /** Load diagram project JSON. Validate with validateDoc (TS side). */
+  loadDiagram: (path: string) => invoke<{ path: string; json: string }>("load_diagram", { path }),
+  /** Write generated SVG string to disk (refuses non-SVG content). */
+  exportSvg: (path: string, svg: string) => invoke<string>("export_svg_file", { args: { path, svg } }),
   presets: () => invoke<PresetInfo[]>("list_presets"),
   history: (limit?: number) =>
     invoke<HistoryRow[]>("get_history", { limit: limit ?? null }),

@@ -116,6 +116,7 @@ impl PdfSplitter for LopdfSplitter {
 /// 3. **Styling**: `Tf` size → half-point `w:sz`; BaseName suffixes →
 ///    bold/italic; images (`DCTDecode`) embed inline at stream y;
 ///    2+-space columnar lines → real `w:tbl`.
+///
 /// Scanned PDFs get a `[No extractable content on page N]` marker — valid
 /// .docx, never empty, never an error.
 pub struct LopdfToDocx;
