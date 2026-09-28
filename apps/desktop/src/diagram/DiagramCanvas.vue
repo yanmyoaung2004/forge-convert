@@ -32,6 +32,8 @@ const MIN_SIZE = 30;
 const svgRef = ref<SVGSVGElement | null>(null);
 const pan = ref({ x: 0, y: 0 });
 const spaceDown = ref(false);
+/** Canvas tool: select (rubber-band) or pan (drag moves viewport). */
+const tool = ref<"select" | "pan">("select");
 const dragSel = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 const moving = ref<{ id: string; dx: number; dy: number; origX: number; origY: number }[] | null>(null);
 const resizing = ref<{ id: string; corner: string; startX: number; startY: number; orig: DiagramElement } | null>(null);
@@ -70,7 +72,7 @@ function snap(v: number): number {
 }
 
 function onBackgroundDown(e: PointerEvent): void {
-  if (spaceDown.value || e.button === 1) {
+  if (spaceDown.value || e.button === 1 || tool.value === "pan") {
     startPan(e);
     return;
   }
@@ -314,6 +316,13 @@ const PORT_LIST: Port[] = ["n", "e", "s", "w"];
 function isSelected(id: string): boolean {
   return props.selection.includes(id);
 }
+
+/** Active tool for parent toolbar (v key toggles). */
+function setTool(t: "select" | "pan"): void {
+  tool.value = t;
+}
+
+defineExpose({ setTool, tool });
 </script>
 
 <template>
@@ -321,6 +330,7 @@ function isSelected(id: string): boolean {
     <svg
       ref="svgRef"
       class="canvas"
+      :class="{ panning: tool === 'pan' || spaceDown }"
       :viewBox="viewBox"
       @pointerdown="onBackgroundDown"
       @pointermove="onPointerMove"
@@ -481,6 +491,12 @@ function isSelected(id: string): boolean {
   min-height: 380px;
   cursor: default;
   touch-action: none;
+}
+.canvas.panning {
+  cursor: grab;
+}
+.canvas.panning:active {
+  cursor: grabbing;
 }
 .grid line {
   stroke: #ece7dd;

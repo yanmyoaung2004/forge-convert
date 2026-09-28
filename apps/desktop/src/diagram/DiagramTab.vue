@@ -27,7 +27,13 @@ const dirty = ref(false);
 const clipboard = ref<{ elements: DiagramElement[]; connections: DiagramConnection[] } | null>(null);
 const history = new History(doc.value);
 const editingLabel = ref<string | null>(null);
-
+/** Active canvas tool (mirrors DiagramCanvas via ref). */
+const canvasRef = ref<{ setTool: (t: "select" | "pan") => void; tool: "select" | "pan" } | null>(null);
+const canvasTool = ref<"select" | "pan">("select");
+function setCanvasTool(t: "select" | "pan"): void {
+  canvasTool.value = t;
+  canvasRef.value?.setTool(t);
+}
 const selectedEl = computed(() => doc.value.elements.find((e) => e.id === selection.value[0]) ?? null);
 const selectedConn = computed(() => doc.value.connections.find((c) => c.id === selConn.value) ?? null);
 const svgText = computed(() => toSvg(doc.value));
@@ -370,6 +376,10 @@ function onGlobalKey(e: KeyboardEvent): void {
   } else if (mod && e.key.toLowerCase() === "a") {
     e.preventDefault();
     selectAll();
+  } else if (!mod && e.key.toLowerCase() === "v") {
+    setCanvasTool("select");
+  } else if (!mod && e.key.toLowerCase() === "h") {
+    setCanvasTool("pan");
   }
 }
 
@@ -397,6 +407,9 @@ onMounted(() => {
 <template>
   <section class="diagram" aria-label="SVG Diagram editor">
     <div class="toolbar" role="toolbar" aria-label="Diagram tools">
+      <button class="btn ghost sm" :class="{ on: canvasTool === 'select' }" title="Select tool (V): drag = selection box" @click="setCanvasTool('select')">➤ Select</button>
+      <button class="btn ghost sm" :class="{ on: canvasTool === 'pan' }" title="Pan tool (H or Space+drag): drag = move canvas" @click="setCanvasTool('pan')">✋ Pan</button>
+      <span class="sep" />
       <button class="btn ghost sm" :disabled="!canUndo" title="Undo (Ctrl+Z)" @click="doUndo">↩ Undo</button>
       <button class="btn ghost sm" :disabled="!canRedo" title="Redo (Ctrl+Y)" @click="doRedo">↪ Redo</button>
       <span class="sep" />
@@ -433,7 +446,6 @@ onMounted(() => {
           :key="d.kind"
           class="pal"
           draggable="true"
-          :title="`Drag ${d.label} onto canvas (or click to add)`"
           @dragstart="onPalDrag($event, d.kind)"
           @click="addAtCenter(d.kind)"
         >
@@ -470,6 +482,7 @@ onMounted(() => {
         <button v-else class="btn ghost sm" :disabled="!selectedEl" title="Edit label (double-click canvas label also works)" @click="startLabelEdit">Edit label</button>
       </aside>
       <DiagramCanvas
+        ref="canvasRef"
         :elements="doc.elements"
         :connections="doc.connections"
         :selection="selection"
