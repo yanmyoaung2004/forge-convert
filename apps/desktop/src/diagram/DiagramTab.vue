@@ -118,6 +118,19 @@ function addElement(kind: ElementKind, x: number, y: number): void {
   commit();
 }
 
+/** Palette dragstart: set BOTH MIME types (WebView2 sometimes drops custom types). */
+function onPalDrag(e: DragEvent, kind: ElementKind): void {
+  e.dataTransfer?.setData("text/diagram-kind", kind);
+  e.dataTransfer?.setData("text/plain", kind);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+}
+
+/** Click fallback: add at viewport center (works even if DnD is blocked). */
+function addAtCenter(kind: ElementKind): void {
+  const vp = doc.value.viewport;
+  addElement(kind, vp.x + 400, vp.y + 250);
+}
+
 function onConnect(source: { node: string; port: Port }, target: { node: string; port: Port }): void {
   doc.value.connections.push({
     id: newId("conn"),
@@ -420,8 +433,9 @@ onMounted(() => {
           :key="d.kind"
           class="pal"
           draggable="true"
-          :title="`Drag ${d.label} onto canvas`"
-          @dragstart="($event.dataTransfer?.setData('text/diagram-kind', d.kind))"
+          :title="`Drag ${d.label} onto canvas (or click to add)`"
+          @dragstart="onPalDrag($event, d.kind)"
+          @click="addAtCenter(d.kind)"
         >
           <span class="swatch" :style="{ background: d.fill, borderColor: d.stroke }" />
           {{ d.label }}
@@ -432,8 +446,9 @@ onMounted(() => {
           :key="d.kind"
           class="pal"
           draggable="true"
-          :title="`Drag ${d.label} onto canvas`"
-          @dragstart="($event.dataTransfer?.setData('text/diagram-kind', d.kind))"
+          :title="`Drag ${d.label} onto canvas (or click to add)`"
+          @dragstart="onPalDrag($event, d.kind)"
+          @click="addAtCenter(d.kind)"
         >
           <span class="swatch" :style="{ background: d.fill, borderColor: d.stroke }" />
           {{ d.label }}

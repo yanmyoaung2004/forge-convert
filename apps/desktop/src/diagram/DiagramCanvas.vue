@@ -230,10 +230,25 @@ function onPortUp(e: PointerEvent, node: string, port: Port): void {
   pendingConn.value = null;
 }
 
+function onDragOver(e: DragEvent): void {
+  // Must preventDefault AND set dropEffect: some WebViews (WebView2)
+  // ignore Vue's .prevent modifier alone and never fire drop.
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+}
+
+const KNOWN_KINDS = new Set([
+  "rect", "rounded", "circle", "ellipse", "diamond", "text",
+  "input", "output", "process", "database", "server", "api",
+  "client", "cloud", "queue", "user", "document", "storage",
+]);
+
 function onDrop(e: DragEvent): void {
   e.preventDefault();
-  const kind = e.dataTransfer?.getData("text/diagram-kind") as ElementKind | "";
-  if (!kind || !svgRef.value) return;
+  const raw =
+    e.dataTransfer?.getData("text/diagram-kind") || e.dataTransfer?.getData("text/plain") || "";
+  const kind = raw as ElementKind | "";
+  if (!kind || !KNOWN_KINDS.has(kind) || !svgRef.value) return;
   const rect = svgRef.value.getBoundingClientRect();
   const p = screenToWorld(e.clientX, e.clientY, rect, { panX: pan.value.x, panY: pan.value.y, zoom: props.zoom });
   emit("dropNew", kind, snap(p.x), snap(p.y));
@@ -287,7 +302,7 @@ function isSelected(id: string): boolean {
       @pointerup="onPointerUp"
       @click="onCanvasClick"
       @wheel="onWheel"
-      @dragover.prevent
+      @dragover="onDragOver"
       @drop="onDrop"
       role="application"
       aria-label="Diagram canvas"
