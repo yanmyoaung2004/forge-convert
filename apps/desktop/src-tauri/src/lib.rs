@@ -5,7 +5,7 @@
 //! authoritative. No conversion logic lives here or in TypeScript.
 
 mod commands;
-
+mod diagram;
 /// Desktop entry point (CTA-conventional: `main.rs` calls `run()`).
 pub fn run() {
     tauri::Builder::default()
@@ -22,6 +22,9 @@ pub fn run() {
             commands::pdf_page_count,
             commands::list_presets,
             commands::get_history,
+            diagram::save_diagram,
+            diagram::load_diagram,
+            diagram::export_svg_file,
         ])
         .run(tauri::generate_context!())
         .expect("ForgeConvert desktop failed to start");
