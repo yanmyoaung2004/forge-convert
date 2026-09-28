@@ -26,7 +26,6 @@ export function screenToWorld(sx: number, sy: number, rect: DOMRect, view: View)
 export function worldToScreen(wx: number, wy: number, view: View): Pt {
   return { x: wx * view.zoom + view.panX, y: wy * view.zoom + view.panY };
 }
-
 /** Port anchor on an element's border midpoint. */
 export function portPoint(el: DiagramElement, port: Port): Pt {
   switch (port) {
@@ -41,6 +40,36 @@ export function portPoint(el: DiagramElement, port: Port): Pt {
   }
 }
 
+const PORTS: Port[] = ["n", "e", "s", "w"];
+
+/**
+ * Nearest port within `tol` world units of `p` (any element but `exclude`).
+ * Drag-release hit-testing: pointer-capture retargets pointerup to the
+ * source circle, so Vue's per-circle @pointerup never fires on the target.
+ * Hit-testing the release point in world coords fixes it deterministically.
+ */
+export function portAt(
+  elements: DiagramElement[],
+  p: Pt,
+  tol: number,
+  exclude?: string,
+): { node: string; port: Port } | null {
+  let best: { node: string; port: Port } | null = null;
+  let bestD = tol;
+  for (const el of elements) {
+    if (el.id === exclude) continue;
+    for (const port of PORTS) {
+      const q = portPoint(el, port);
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d <= bestD) {
+        bestD = d;
+        best = { node: el.id, port };
+      }
+    }
+  }
+  return best;
+}
+
 /** Bounding-box hit test in world coords. */
 export function hitElement(el: DiagramElement, p: Pt): boolean {
   return p.x >= el.x && p.x <= el.x + el.w && p.y >= el.y && p.y <= el.y + el.h;
@@ -50,8 +79,6 @@ export function hitElement(el: DiagramElement, p: Pt): boolean {
 export function snapVal(v: number, grid: number, enabled: boolean): number {
   return enabled ? Math.round(v / grid) * grid : v;
 }
-
-const PORTS: Port[] = ["n", "e", "s", "w"];
 
 function byId<T extends { id: string }>(list: T[], id: string): T | undefined {
   return list.find((e) => e.id === id);

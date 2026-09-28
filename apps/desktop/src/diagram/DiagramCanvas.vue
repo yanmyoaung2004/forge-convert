@@ -5,8 +5,7 @@ world units via geometry.screenToWorld. -->
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { DiagramConnection, DiagramElement, ElementKind, Port } from "./types";
 import { baseOf, diamondPoints } from "./elements";
-import { connectionPath, dashArray, hitElement, portPoint, screenToWorld } from "./geometry";
-
+import { connectionPath, dashArray, hitElement, portAt, portPoint, screenToWorld } from "./geometry";
 const props = defineProps<{
   elements: DiagramElement[];
   connections: DiagramConnection[];
@@ -37,7 +36,8 @@ const moving = ref<{ id: string; dx: number; dy: number; origX: number; origY: n
 const resizing = ref<{ id: string; corner: string; startX: number; startY: number; orig: DiagramElement } | null>(null);
 const pendingConn = ref<{ node: string; port: Port } | null>(null);
 const hoverPort = ref<{ node: string; port: Port } | null>(null);
-
+/** Live preview line end (world) while dragging a connection. */
+const dragLine = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 const viewBox = computed(() => {
   const w = svgRef.value?.clientWidth ?? 800;
   const h = svgRef.value?.clientHeight ?? 500;
@@ -157,12 +157,22 @@ function onElementDown(e: PointerEvent, el: DiagramElement): void {
 
 function onPointerMove(e: PointerEvent): void {
   onBackgroundMove(e);
-  if (moving.value) {
+  if (pendingConn.value) {
+    // Live preview: source port → cursor (world). Updates every move so
+    // the user sees the wire while dragging (the "nothing happens" fix).
+    const src = props.elements.find((x) => x.id === pendingConn.value?.node);
     const p = toWorld(e);
+    if (src && pendingConn.value) {
+      const q = portPoint(src, pendingConn.value.port);
+      dragLine.value = { x0: q.x, y0: q.y, x1: p.x, y1: p.y };
+    }
+  }
+  if (moving.value) {
+    const mp = toWorld(e);
     const moves = moving.value.map((m) => {
       const el = props.elements.find((x) => x.id === m.id);
       if (!el) return { id: m.id, x: m.origX, y: m.origY };
-      return { id: m.id, x: snap(p.x - m.dx), y: snap(p.y - m.dy) };
+      return { id: m.id, x: snap(mp.x - m.dx), y: snap(mp.y - m.dy) };
     });
     emit("move", moves, false);
   }
@@ -189,6 +199,18 @@ function onPointerMove(e: PointerEvent): void {
 }
 
 function onPointerUp(e: PointerEvent): void {
+  if (pendingConn.value) {
+    // Release-point hit-test: pointer capture retargets pointerup to the
+    // SOURCE circle, so per-circle @pointerup never fires on the target.
+    // Resolve the drop in world coords instead (deterministic).
+    const p = toWorld(e);
+    const tol = 24 / props.zoom;
+    const hit = portAt(props.elements, p, tol, pendingConn.value.node);
+    if (hit) emit("connect", pendingConn.value, hit);
+    pendingConn.value = null;
+    dragLine.value = null;
+    return;
+  }
   if (panning.value) {
     panning.value = false;
   } else if (dragSel.value) {
@@ -219,7 +241,9 @@ function onResizeDown(e: PointerEvent, el: DiagramElement, corner: string): void
 function onPortDown(e: PointerEvent, node: string, port: Port): void {
   e.stopPropagation();
   pendingConn.value = { node, port };
-  (e.target as SVGElement).setPointerCapture?.(e.pointerId);
+  dragLine.value = null;
+  // NO pointer capture: capturing retargets pointerup to the source circle,
+  // so the target circle's @pointerup never fires (the reported bug).
 }
 
 function onPortUp(e: PointerEvent, node: string, port: Port): void {
@@ -228,8 +252,8 @@ function onPortUp(e: PointerEvent, node: string, port: Port): void {
     emit("connect", pendingConn.value, { node, port });
   }
   pendingConn.value = null;
+  dragLine.value = null;
 }
-
 function onDragOver(e: DragEvent): void {
   // Must preventDefault AND set dropEffect: some WebViews (WebView2)
   // ignore Vue's .prevent modifier alone and never fire drop.
@@ -323,6 +347,12 @@ function isSelected(id: string): boolean {
           :opacity="c.opacity"
           :marker-end="c.arrow === 'end' || c.arrow === 'both' ? 'url(#darr)' : undefined"
           :marker-start="c.arrow === 'start' || c.arrow === 'both' ? 'url(#darr)' : undefined"
+        />
+        <line
+          v-if="dragLine"
+          :x1="dragLine.x0" :y1="dragLine.y0" :x2="dragLine.x1" :y2="dragLine.y1"
+          stroke="#e86a2c" :stroke-width="2 / zoom" stroke-dasharray="6 4"
+          pointer-events="none"
         />
       </g>
       <defs>
