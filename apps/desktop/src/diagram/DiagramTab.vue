@@ -1,12 +1,11 @@
 <!-- SVG Diagram tab: owns doc + selection + history, wires canvas,
 props, layout, templates, persistence, export. Backend only moves bytes. -->
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import DiagramCanvas from "./DiagramCanvas.vue";
 import PropsPanel from "./PropsPanel.vue";
-import CodeViewer from "./CodeViewer.vue";
 import { blankDoc, newId, validateDoc, type DiagramConnection, type DiagramDoc, type DiagramElement, type ElementKind, type Port } from "./types";
 import { createElement, ELEMENTS } from "./elements";
 import { History } from "./history";
@@ -27,7 +26,7 @@ const dirty = ref(false);
 const clipboard = ref<{ elements: DiagramElement[]; connections: DiagramConnection[] } | null>(null);
 const history = new History(doc.value);
 const editingLabel = ref<string | null>(null);
-const canvasRef = ref<{ setTool: (t: "select" | "pan") => void; tool: "select" | "pan" } | null>(null);
+const canvasRef = ref<{ setTool: (t: "select" | "pan") => void; tool: "select" | "pan"; holdToolKey: (key: string, down: boolean) => void } | null>(null);
 const canvasTool = ref<"select" | "pan">("select");
 function setCanvasTool(t: "select" | "pan"): void {
   canvasTool.value = t;
@@ -397,12 +396,19 @@ function onGlobalKey(e: KeyboardEvent): void {
   } else if (!mod && e.key.toLowerCase() === "h") {
     setCanvasTool("pan");
   }
+  // Unity/Unreal-style momentary hold: forward bare Q/V/H/Space keydown to
+  // the canvas (hold → temp tool, keyup → restore). Skip when typing.
+  const bare = !mod && ["q", "v", "h", " "].includes(e.key.toLowerCase());
+  if (bare && !e.repeat) canvasRef.value?.holdToolKey(e.key, true);
+}
+
+function onGlobalKeyUp(e: KeyboardEvent): void {
+  canvasRef.value?.holdToolKey(e.key, false);
 }
 
 function startLabelEdit(): void {
   if (selectedEl.value) editingLabel.value = selectedEl.value.id;
 }
-
 function commitLabelEdit(value: string): void {
   if (editingLabel.value) {
     const el = doc.value.elements.find((e) => e.id === editingLabel.value);
@@ -416,7 +422,12 @@ function commitLabelEdit(value: string): void {
 
 onMounted(() => {
   window.addEventListener("keydown", onGlobalKey);
+  window.addEventListener("keyup", onGlobalKeyUp);
   syncHistFlags();
+});
+onUnmounted(() => {
+  window.removeEventListener("keydown", onGlobalKey);
+  window.removeEventListener("keyup", onGlobalKeyUp);
 });
 </script>
 

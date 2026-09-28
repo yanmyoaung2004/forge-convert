@@ -34,6 +34,10 @@ const pan = ref({ x: 0, y: 0 });
 const spaceDown = ref(false);
 /** Canvas tool: select (rubber-band) or pan (drag moves viewport). */
 const tool = ref<"select" | "pan">("select");
+/** Momentary override while a hotkey is HELD (Q=select, H/Space=pan).
+ * Key-up restores the toolbar tool. Unity/Unreal-style: no clicking. */
+const heldTool = ref<"select" | "pan" | null>(null);
+const activeTool = computed(() => heldTool.value ?? tool.value);
 const dragSel = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 const moving = ref<{ id: string; dx: number; dy: number; origX: number; origY: number }[] | null>(null);
 const resizing = ref<{ id: string; corner: string; startX: number; startY: number; orig: DiagramElement } | null>(null);
@@ -72,7 +76,7 @@ function snap(v: number): number {
 }
 
 function onBackgroundDown(e: PointerEvent): void {
-  if (spaceDown.value || e.button === 1 || tool.value === "pan") {
+  if (spaceDown.value || e.button === 1 || activeTool.value === "pan") {
     startPan(e);
     return;
   }
@@ -294,6 +298,20 @@ function onKey(e: KeyboardEvent): void {
   }
 }
 
+/**
+ * Momentary tool hold (Unity/Unreal-style): H/Space held → pan while held,
+ * Q/V held → select while held; release restores the toolbar tool.
+ * Parent forwards bare keydown/keyup (it owns global shortcuts).
+ */
+function holdToolKey(key: string, down: boolean): void {
+  const k = key.toLowerCase();
+  if (down) {
+    if (k === "h" || k === " ") heldTool.value = "pan";
+    else if (k === "q" || k === "v") heldTool.value = "select";
+  } else if (k === "h" || k === " " || k === "q" || k === "v") {
+    heldTool.value = null;
+  }
+}
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => window.removeEventListener("keydown", onKey));
 
@@ -345,7 +363,7 @@ function setTool(t: "select" | "pan"): void {
   tool.value = t;
 }
 
-defineExpose({ setTool, tool });
+defineExpose({ setTool, tool, holdToolKey, activeTool });
 </script>
 
 <template>
@@ -353,7 +371,7 @@ defineExpose({ setTool, tool });
     <svg
       ref="svgRef"
       class="canvas"
-      :class="{ panning: tool === 'pan' || spaceDown }"
+      :class="{ panning: activeTool === 'pan' || spaceDown }"
       :viewBox="viewBox"
       @pointerdown="onBackgroundDown"
       @pointermove="onPointerMove"
