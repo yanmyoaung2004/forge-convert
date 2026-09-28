@@ -33,11 +33,11 @@ function onImport(): void {
 <template>
   <section class="code" aria-label="SVG source">
     <div class="code-head">
-      <strong>SVG</strong>
-      <span class="dim">{{ svg.length }} chars</span>
+      <strong>SVG code</strong>
+      <span class="dim">{{ svg.length }} chars · paste any SVG here, then Import → blocks</span>
       <span v-if="dirty" class="edited" title="Edited — Import to load as blocks, or Revert">● edited</span>
       <span class="spacer" />
-      <button class="btn ghost sm" @click="onImport" title="Parse the box content into editable blocks">Import → blocks</button>
+      <button class="btn ghost sm primary" @click="onImport" title="Parse the box content into editable blocks">Import → blocks</button>
       <button class="btn ghost sm" @click="draft = svg; dirty = false" title="Discard edits, show current canvas SVG">Revert</button>
       <button class="btn ghost sm" @click="onCopy" :title="copied ? 'Copied!' : 'Copy SVG source'">{{ copied ? "✓ Copied" : "Copy" }}</button>
       <button class="btn ghost sm" @click="emit('download')" title="Download .svg file">Download</button>
@@ -46,7 +46,8 @@ function onImport(): void {
       class="src"
       v-model="draft"
       spellcheck="false"
-      aria-label="SVG source (editable — Import loads it as blocks)"
+      placeholder="<svg …>paste SVG code here, then click Import → blocks</svg>"
+      aria-label="SVG source (editable — paste code, then Import loads it as blocks)"
       @input="dirty = true"
     ></textarea>
   </section>
@@ -55,26 +56,28 @@ function onImport(): void {
 <style scoped>
 .code {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 2px solid var(--brand);
   border-radius: 12px;
   padding: 0.7rem 0.8rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
-.code-head { display: flex; align-items: center; gap: 0.6rem; }
+.code-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .edited { color: var(--brand-deep); font-size: 0.8rem; font-weight: 700; }
 .spacer { flex: 1; }
 .src {
   width: 100%;
-  min-height: 110px;
-  max-height: 180px;
+  min-height: 220px;
+  max-height: 320px;
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 8px;
+  padding: 0.5rem;
   resize: vertical;
   background: #fffdf9;
 }
 .btn.sm { padding: 0.35rem 0.7rem; font-size: 0.82rem; }
+.btn.primary { background: var(--brand); border-color: var(--brand-deep); color: white; font-weight: 700; }
 </style>
