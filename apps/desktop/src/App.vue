@@ -603,15 +603,18 @@ body {
 
 <style scoped>
 .app {
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem 3rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: clamp(1rem, 2vw + 0.5rem, 2rem) clamp(0.75rem, 3vw, 2.5rem) 3rem;
+}
+.diagram-wrap {
+  width: 100%;
 }
 .hero {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 1rem;
   flex-wrap: wrap;
   margin-bottom: 1.25rem;
 }

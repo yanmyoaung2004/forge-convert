@@ -477,8 +477,9 @@ defineExpose({ setTool, tool });
 
 <style scoped>
 .canvas-host {
-  flex: 1;
-  min-height: 380px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: clamp(380px, 55vh, 720px);
   position: relative;
   background: #fffdf9;
   border: 1px solid var(--line);
@@ -488,9 +489,10 @@ defineExpose({ setTool, tool });
 .canvas {
   width: 100%;
   height: 100%;
-  min-height: 380px;
+  min-height: inherit;
   cursor: default;
   touch-action: none;
+  display: block;
 }
 .canvas.panning {
   cursor: grab;

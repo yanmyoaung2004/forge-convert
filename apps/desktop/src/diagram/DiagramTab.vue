@@ -520,11 +520,11 @@ onMounted(() => {
 .zoom { min-width: 3rem; text-align: center; font-variant-numeric: tabular-nums; }
 .tpl { border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.4rem; font: inherit; }
 .spacer { flex: 1; }
-.workbench { display: flex; gap: 0.7rem; align-items: stretch; }
+.workbench { display: flex; gap: 0.7rem; align-items: stretch; width: 100%; min-height: 420px; }
 .library {
-  width: 150px; flex: none; background: var(--panel);
+  width: clamp(140px, 14vw, 200px); flex: none; background: var(--panel);
   border: 1px solid var(--line); border-radius: 12px; padding: 0.7rem;
-  max-height: 560px; overflow-y: auto;
+  max-height: 70vh; overflow-y: auto;
 }
 .library h4 { margin: 0.5rem 0 0.35rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }
 .library h4:first-child { margin-top: 0; }
@@ -536,6 +536,11 @@ onMounted(() => {
 .pal:active { cursor: grabbing; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 2px solid; flex: none; }
 .row { display: flex; gap: 0.35rem; margin-bottom: 0.4rem; }
-.row input { flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.45rem; font: inherit; }
+.row input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.45rem; font: inherit; }
 .error { color: var(--danger); }
+/* Narrow: sidebars stack above/below canvas instead of squeezing it. */
+@media (max-width: 900px) {
+  .workbench { flex-direction: column; }
+  .library { width: 100%; max-height: 220px; }
+}
 </style>

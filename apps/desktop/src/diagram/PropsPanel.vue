@@ -92,14 +92,17 @@ function num(v: string, fallback: number): number {
 
 <style scoped>
 .props {
-  width: 230px;
+  width: clamp(210px, 18vw, 280px);
   flex: none;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.8rem;
   overflow-y: auto;
-  max-height: 560px;
+  max-height: 70vh;
+}
+@media (max-width: 900px) {
+  .props { width: 100%; max-height: 260px; }
 }
 .props h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
 .props h4 { margin: 0.7rem 0 0.35rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }
