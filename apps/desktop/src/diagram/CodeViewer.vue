@@ -40,7 +40,7 @@ function onImport(): void {
       <button class="btn ghost sm primary" @click="onImport" title="Parse the box content into editable blocks">Import → blocks</button>
       <button class="btn ghost sm" @click="draft = svg; dirty = false" title="Discard edits, show current canvas SVG">Revert</button>
       <button class="btn ghost sm" @click="onCopy" :title="copied ? 'Copied!' : 'Copy SVG source'">{{ copied ? "✓ Copied" : "Copy" }}</button>
-      <button class="btn ghost sm" @click="emit('download')" title="Download .svg file">Download</button>
+      <button class="btn ghost sm primary" @click="emit('download')" title="Save the diagram as a .svg file">Export SVG</button>
     </div>
     <textarea
       class="src"
