@@ -4,7 +4,7 @@ world units via geometry.screenToWorld. -->
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { DiagramConnection, DiagramElement, ElementKind, Port } from "./types";
-import { baseOf, cylinderPaths, diamondPoints } from "./elements";
+import { apiGlyph, baseOf, clientGlyph, cloudPath, cylinderPaths, dbGrid, diamondPoints, docGlyph, gearGlyph, ioArrow, queueRows, serverGlyph, userGlyph } from "./elements";
 import { connectionPath, dashArray, hitElement, portAt, portPoint, screenToWorld } from "./geometry";
 
 const props = defineProps<{
@@ -319,6 +319,27 @@ function isSelected(id: string): boolean {
   return props.selection.includes(id);
 }
 
+/**
+ * Label anchor: plain shapes center the label; icon blocks (server, cloud,
+ * queue, user, document, api, client, input, output, process) reserve the
+ * top ~55% for the glyph and put the label in the bottom band.
+ */
+function hasGlyphTop(type: DiagramElement["type"]): boolean {
+  return (
+    type === "server" || type === "cloud" || type === "queue" || type === "user" ||
+    type === "document" || type === "api" || type === "client" ||
+    type === "input" || type === "output" || type === "process"
+  );
+}
+function labelX(el: DiagramElement): number {
+  if (el.align === "left") return el.x + 8;
+  if (el.align === "right") return el.x + el.w - 8;
+  return el.x + el.w / 2;
+}
+function labelY(el: DiagramElement): number {
+  if (hasGlyphTop(el.type)) return el.y + el.h * 0.72 + el.h * 0.14;
+  return el.y + el.h / 2;
+}
 /** Active tool for parent toolbar (v key toggles). */
 function setTool(t: "select" | "pan"): void {
   tool.value = t;
@@ -428,6 +449,11 @@ defineExpose({ setTool, tool });
             :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom"
             :opacity="el.opacity"
           />
+          <path
+            v-if="el.type === 'database' || el.type === 'storage'"
+            :d="dbGrid(el.x, el.y, el.w, el.h)"
+            fill="none" :stroke="el.stroke" :stroke-width="1.2 / zoom" :opacity="0.55 * el.opacity"
+          />
         </g>
         <!-- UML actor: head + body + limbs (stick figure). -->
         <g v-else-if="baseOf(el.type) === 'actor'">
@@ -519,16 +545,61 @@ defineExpose({ setTool, tool });
           :x="el.x" :y="el.y" :width="el.w" :height="el.h"
           fill="transparent" stroke="none" :opacity="el.opacity"
         />
+        <!-- Realistic dev icons: shell + glyph (label below via labelY). -->
+        <g v-else-if="baseOf(el.type) === 'server'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" rx="10" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="serverGlyph(el.x, el.y, el.w, el.h).box" fill="none" :stroke="el.stroke" :stroke-width="1.8 / zoom" />
+          <path :d="serverGlyph(el.x, el.y, el.w, el.h).slots" fill="none" :stroke="el.stroke" :stroke-width="1.2 / zoom" :opacity="0.7 * el.opacity" />
+          <circle v-for="(led, i) in serverGlyph(el.x, el.y, el.w, el.h).leds" :key="i" :cx="led.cx" :cy="led.cy" :r="led.r / zoom + 1" :fill="el.stroke" :opacity="el.opacity" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'cloud'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" rx="10" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="cloudPath(el.x, el.y, el.w, el.h)" fill="none" :stroke="el.stroke" :stroke-width="2 / zoom" stroke-linecap="round" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'queue'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" rx="10" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="queueRows(el.x, el.y, el.w, el.h).rows" fill="none" :stroke="el.stroke" :stroke-width="1.4 / zoom" />
+          <circle v-for="(dt, i) in queueRows(el.x, el.y, el.w, el.h).dots" :key="i" :cx="dt.cx" :cy="dt.cy" :r="dt.r / zoom + 0.8" :fill="el.stroke" :opacity="0.8 * el.opacity" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'user'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" rx="10" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <circle :cx="userGlyph(el.x, el.y, el.w, el.h).head.cx" :cy="userGlyph(el.x, el.y, el.w, el.h).head.cy" :r="userGlyph(el.x, el.y, el.w, el.h).head.r" fill="none" :stroke="el.stroke" :stroke-width="1.8 / zoom" />
+          <path :d="userGlyph(el.x, el.y, el.w, el.h).shoulders" fill="none" :stroke="el.stroke" :stroke-width="1.8 / zoom" stroke-linecap="round" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'document'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" rx="10" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="docGlyph(el.x, el.y, el.w, el.h).page" fill="#ffffff" :stroke="el.stroke" :stroke-width="1.5 / zoom" />
+          <path :d="docGlyph(el.x, el.y, el.w, el.h).fold" fill="none" :stroke="el.stroke" :stroke-width="1.2 / zoom" />
+          <path :d="docGlyph(el.x, el.y, el.w, el.h).lines" :stroke="el.stroke" :stroke-width="1.2 / zoom" :opacity="0.6 * el.opacity" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'api'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" :rx="el.radius ?? 12" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="apiGlyph(el.x, el.y)" fill="none" :stroke="el.stroke" :stroke-width="2 / zoom" stroke-linecap="round" stroke-linejoin="round" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'client'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" :rx="el.radius ?? 12" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="clientGlyph(el.x, el.y, el.w, el.h).screen" fill="#ffffff" :stroke="el.stroke" :stroke-width="1.5 / zoom" />
+          <path :d="clientGlyph(el.x, el.y, el.w, el.h).stand" fill="none" :stroke="el.stroke" :stroke-width="1.5 / zoom" stroke-linecap="round" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'input' || baseOf(el.type) === 'output'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" :rx="el.radius ?? 10" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <path :d="ioArrow(el.x, el.y, baseOf(el.type) === 'input' ? -1 : 1)" fill="none" :stroke="el.stroke" :stroke-width="2 / zoom" stroke-linecap="round" stroke-linejoin="round" />
+        </g>
+        <g v-else-if="baseOf(el.type) === 'process'">
+          <rect :x="el.x" :y="el.y" :width="el.w" :height="el.h" :fill="el.fill" :stroke="isSelected(el.id) ? '#e86a2c' : el.stroke" :stroke-width="(isSelected(el.id) ? el.strokeWidth + 1 : el.strokeWidth) / zoom" :opacity="el.opacity" />
+          <circle :cx="gearGlyph(el.x, el.y).ring.cx" :cy="gearGlyph(el.x, el.y).ring.cy" :r="gearGlyph(el.x, el.y).ring.r" fill="none" :stroke="el.stroke" :stroke-width="1.8 / zoom" />
+          <path :d="gearGlyph(el.x, el.y).spokes" :stroke="el.stroke" :stroke-width="1.8 / zoom" stroke-linecap="round" />
+        </g>
         <text
-          :x="el.align === 'left' ? el.x + 8 : el.align === 'right' ? el.x + el.w - 8 : el.x + el.w / 2"
-          :y="el.y + el.h / 2"
+          :x="labelX(el)" :y="labelY(el)"
           text-anchor="middle"
           dominant-baseline="central"
           :font-size="el.fontSize"
           :font-weight="el.fontWeight"
           :fill="el.textColor"
+          style="pointer-events: none; user-select: none"
         >
-          <tspan v-for="(ln, i) in el.label.split('\n')" :key="i" :x="el.align === 'left' ? el.x + 8 : el.align === 'right' ? el.x + el.w - 8 : el.x + el.w / 2" :dy="i === 0 ? -((el.label.split('\n').length - 1) * el.fontSize * 0.625) : el.fontSize * 1.25" :text-anchor="el.align === 'left' ? 'start' : el.align === 'right' ? 'end' : 'middle'">{{ ln }}</tspan>
+          <tspan v-for="(ln, i) in el.label.split('\n')" :key="i" :x="labelX(el)" :dy="i === 0 ? -((el.label.split('\n').length - 1) * el.fontSize * 0.625) : el.fontSize * 1.25" :text-anchor="el.align === 'left' ? 'start' : el.align === 'right' ? 'end' : 'middle'">{{ ln }}</tspan>
         </text>
         <g v-if="isSelected(el.id) || hoverPort?.node === el.id" class="ports">
           <circle

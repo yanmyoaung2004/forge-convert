@@ -1,7 +1,7 @@
 // SVG serialization: DiagramDoc → standalone vector SVG string.
 // No Vue/DOM. Escapes text, emits markers once, viewBox from content bounds.
 import type { DiagramConnection, DiagramDoc, DiagramElement } from "./types";
-import { baseOf, cylinderPaths, diamondPoints } from "./elements";
+import { apiGlyph, baseOf, clientGlyph, cloudPath, cylinderPaths, diamondPoints, docGlyph, gearGlyph, ioArrow, queueRows, serverGlyph, userGlyph } from "./elements";
 import { connectionPath, dashArray, portPoint } from "./geometry";
 
 function esc(s: string): string {
@@ -61,6 +61,40 @@ function shapeSvg(el: DiagramElement): string {
     return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" ${common}/>`;
   }
   if (base === "fkLink") return "";
+  const iconShell = (rx = 10): string =>
+    `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" rx="${num(rx)}" ${common}/>`;
+  if (base === "server") {
+    const g = serverGlyph(el.x, el.y, el.w, el.h);
+    const leds = g.leds.map((l) => `<circle cx="${num(l.cx)}" cy="${num(l.cy)}" r="${num(l.r)}" fill="${el.stroke}"/>`).join("");
+    return iconShell() + `<path d="${g.box}" fill="none" ${common}/><path d="${g.slots}" fill="none" ${common}/>${leds}`;
+  }
+  if (base === "cloud") return iconShell() + `<path d="${cloudPath(el.x, el.y, el.w, el.h)}" fill="none" ${common}/>`;
+  if (base === "queue") {
+    const q = queueRows(el.x, el.y, el.w, el.h);
+    const dots = q.dots.map((d) => `<circle cx="${num(d.cx)}" cy="${num(d.cy)}" r="${num(d.r)}" fill="${el.stroke}"/>`).join("");
+    return iconShell() + `<path d="${q.rows}" fill="none" ${common}/>${dots}`;
+  }
+  if (base === "user") {
+    const u = userGlyph(el.x, el.y, el.w, el.h);
+    return iconShell() + `<circle cx="${num(u.head.cx)}" cy="${num(u.head.cy)}" r="${num(u.head.r)}" fill="none" ${common}/><path d="${u.shoulders}" fill="none" ${common}/>`;
+  }
+  if (base === "document") {
+    const d = docGlyph(el.x, el.y, el.w, el.h);
+    return iconShell() + `<path d="${d.page}" fill="#ffffff" ${common}/><path d="${d.fold}" fill="none" ${common}/><path d="${d.lines}" ${common}/>`;
+  }
+  if (base === "api") return iconShell(12) + `<path d="${apiGlyph(el.x, el.y)}" fill="none" ${common}/>`;
+  if (base === "client") {
+    const c = clientGlyph(el.x, el.y, el.w, el.h);
+    return iconShell(12) + `<path d="${c.screen}" fill="#ffffff" ${common}/><path d="${c.stand}" fill="none" ${common}/>`;
+  }
+  if (base === "input" || base === "output") {
+    return iconShell(10) + `<path d="${ioArrow(el.x, el.y, base === "input" ? -1 : 1)}" fill="none" ${common}/>`;
+  }
+  if (base === "process") {
+    const g = gearGlyph(el.x, el.y);
+    return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" ${common}/>` +
+      `<circle cx="${num(g.ring.cx)}" cy="${num(g.ring.cy)}" r="${num(g.ring.r)}" fill="none" ${common}/><path d="${g.spokes}" ${common}/>`;
+  }
   if (base === "rounded") {
     const rad = el.radius ?? 10;
     return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${num(el.w)}" height="${num(el.h)}" rx="${num(rad)}" ${common}/>`;

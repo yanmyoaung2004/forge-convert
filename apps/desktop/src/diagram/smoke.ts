@@ -28,7 +28,7 @@ check("ids unique", ids.size === 3);
 // Registry: 18 kinds, developer types present
 check("registry has 27", ELEMENTS.length === 27);
 check("registry has api/db", ELEMENTS.some((e) => e.kind === "api") && ELEMENTS.some((e) => e.kind === "database"));
-check("baseOf api is rounded", baseOf("api") === "rounded");
+check("baseOf api is api", baseOf("api") === "api");
 check("diamond points", diamondPoints(0, 0, 100, 60).split(" ").length === 4);
 
 // Geometry: screen→world at zoom 2 with pan
