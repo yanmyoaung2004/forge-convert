@@ -552,7 +552,7 @@ onMounted(() => {
       <DiagramTab />
     </section>
 
-    <section v-else-if="!backendError" class="panel">
+    <section v-if="tab === 'history' && !backendError" class="panel">
       <div class="drop-row">
         <button class="btn ghost" @click="refresh">↻ Refresh</button>
       </div>

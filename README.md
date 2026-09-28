@@ -15,10 +15,9 @@ Stack: **Tauri 2 + Rust core + Vue 3 + TypeScript + Vite + SQLite** (history/set
 - **PDF**: images → PDF (A4/Letter, portrait/landscape, fit/fill); PDF → image stubbed as honest `Unsupported` until a renderer qualifies
 - **PDF split**: `pdf-split doc.pdf --pages 2-5` keeps pages 2–5 (`{stem}-split.pdf` default, same `1,3,5-7` grammar as `render --pages`)
 - **PDF → Word**: `pdf-to-docx doc.pdf [--pages 1-3]` exports text to .docx (text-only, page breaks; scanned pages get a marker, never an error)
-- **Batch**: bounded worker pool, per-file + aggregate progress, exact ok/fail/skip counts
 - **History**: SQLite-backed `history` command (metadata only)
-- **Desktop UI**: Tauri shell + Vue UI (Convert/PDF/History tabs, preset chips, clickable reveal-in-folder results)
-## Quick start
+- **Desktop UI**: Tauri shell + Vue UI (Convert/PDF/Diagram/History tabs, preset chips, clickable reveal-in-folder results)
+- **SVG Diagram**: visual editor (18 elements, connections, undo/redo, auto-layout, templates, save/load `.fdiag.json`, copy/download valid SVG)
 
 The repo root is the checkout root (`forge-convert/`); all commands run from there.
 
