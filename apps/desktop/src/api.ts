@@ -172,7 +172,25 @@ export const api = {
     }),
   /** Total PDF pages (drives the desktop page-count line). */
   pdfPageCount: (input: string) => invoke<number>("pdf_page_count", { input }),
-  /** Save diagram project JSON (atomic write, Rust moves bytes). */
+  /** Merge PDFs in order (pages concatenated). */
+  mergePdfs: (args: { inputs: string[]; output?: string }) =>
+    invoke<string>("merge_pdfs", {
+      args: {
+        inputs: args.inputs,
+        output: args.output ?? null,
+        on_collision: "rename",
+      },
+    }),
+  /** Compress a PDF (light = prune orphans, balanced = + recompress). */
+  compressPdf: (args: { input: string; level?: string; output?: string }) =>
+    invoke<string>("compress_pdf", {
+      args: {
+        input: args.input,
+        level: args.level ?? null,
+        output: args.output ?? null,
+        on_collision: "rename",
+      },
+    }),
   saveDiagram: (path: string, json: string) => invoke<string>("save_diagram", { args: { path, json } }),
   /** Load diagram project JSON. Validate with validateDoc (TS side). */
   loadDiagram: (path: string) => invoke<{ path: string; json: string }>("load_diagram", { path }),

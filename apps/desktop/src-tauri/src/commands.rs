@@ -652,6 +652,8 @@ pub fn pdf_to_docx(args: PdfToDocxArgs) -> CommandResult<String> {
     fs.write_atomic(&target, &out_bytes)
         .map_err(CommandError::from)?;
     Ok(target.display().to_string())
+}
+
 /// `pdf_page_count` — total pages (drives the desktop page-count line).
 #[tauri::command]
 pub fn pdf_page_count(input: String) -> CommandResult<u32> {
@@ -743,7 +745,13 @@ pub fn compress_pdf(args: CompressPdfArgs) -> CommandResult<String> {
         ))
         .into());
     }
-    let level = match args.level.as_deref().unwrap_or("balanced").to_ascii_lowercase().as_str() {
+    let level = match args
+        .level
+        .as_deref()
+        .unwrap_or("balanced")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "light" => PdfCompressLevel::Light,
         "balanced" => PdfCompressLevel::Balanced,
         other => {

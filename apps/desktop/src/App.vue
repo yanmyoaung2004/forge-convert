@@ -47,6 +47,8 @@ const pdfPages = ref<number | null>(null);
 const pdfRange = ref("1-2");
 const pdfBusy = ref(false);
 const pdfResult = ref<string | null>(null);
+const pdfCompressLevel = ref("balanced");
+const mergeFiles = ref<string[]>([]);
 const revealFailed = ref<string | null>(null);
 const dragActive = ref(false);
 let dragDepth = 0;
@@ -221,6 +223,48 @@ async function runPdfToDocx() {
     pdfBusy.value = false;
   }
 }
+
+async function pickMergeFiles() {
+  const picked = await pickFiles();
+  if (!picked || picked.length === 0) return;
+  const pdfs = picked.filter((p) => extOf(p) === "pdf");
+  if (pdfs.length === 0) {
+    error.value = "No PDFs in selection — pick .pdf files to merge.";
+    return;
+  }
+  mergeFiles.value = pdfs;
+  pdfResult.value = null;
+}
+
+async function runPdfMerge() {
+  if (mergeFiles.value.length === 0 || pdfBusy.value) return;
+  pdfBusy.value = true;
+  error.value = null;
+  pdfResult.value = null;
+  try {
+    pdfResult.value = await api.mergePdfs({ inputs: mergeFiles.value });
+    history.value = await api.history(20);
+  } catch (err) {
+    error.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  } finally {
+    pdfBusy.value = false;
+  }
+}
+
+async function runPdfCompress() {
+  if (!pdfFile.value || pdfBusy.value) return;
+  pdfBusy.value = true;
+  error.value = null;
+  pdfResult.value = null;
+  try {
+    pdfResult.value = await api.compressPdf({ input: pdfFile.value, level: pdfCompressLevel.value });
+    history.value = await api.history(20);
+  } catch (err) {
+    error.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  } finally {
+    pdfBusy.value = false;
+  }
+}
 async function convert() {
   if (!canConvert.value) return;
   busy.value = true;
@@ -241,7 +285,6 @@ async function convert() {
       upscale: resizeMode.value === "off" ? undefined : upscale.value,
       pngLevel: target.value === "png" ? pngLevel.value : undefined,
       webpLossless: target.value === "webp" ? webpLossless.value || undefined : undefined,
-      stripMetadata: stripMetadata.value,
       onCollision: "rename",
     });
     history.value = await api.history(20);
@@ -539,7 +582,33 @@ onMounted(() => {
           {{ pdfBusy ? "Exporting…" : "Export .docx" }}
         </button>
       </div>
-      <p v-if="error && tab === 'pdf'" class="error" role="alert">{{ error }}</p>
+      <div v-if="pdfFile" class="controls card">
+        <label class="field">
+          <span>Compress</span>
+          <select v-model="pdfCompressLevel">
+            <option value="light">Light (prune only)</option>
+            <option value="balanced">Balanced (prune + recompress)</option>
+          </select>
+        </label>
+        <button class="btn grow" :disabled="pdfBusy" @click="runPdfCompress">
+          {{ pdfBusy ? "Compressing…" : "Compress PDF" }}
+        </button>
+      </div>
+      <div class="controls card">
+        <div class="drop-row">
+          <button class="btn" @click="pickMergeFiles">＋ Merge PDFs ({{ mergeFiles.length }})</button>
+          <button class="btn ghost" :disabled="mergeFiles.length === 0" @click="mergeFiles = []">Clear</button>
+        </div>
+        <ul v-if="mergeFiles.length" class="files">
+          <li v-for="(f, i) in mergeFiles" :key="f" class="file-card">
+            <div class="file-badge">{{ i + 1 }}</div>
+            <div class="file-meta"><strong>{{ fileName(f) }}</strong></div>
+          </li>
+        </ul>
+        <button v-if="mergeFiles.length" class="primary grow" :disabled="pdfBusy" @click="runPdfMerge">
+          {{ pdfBusy ? "Merging…" : `Merge ${mergeFiles.length} PDFs` }}
+        </button>
+      </div>
       <div v-if="pdfResult" class="result card">
         <p class="result-head">✅ written</p>
         <button class="link" @click="reveal(pdfResult)" :title="`Reveal ${fileName(pdfResult)} in folder`">
