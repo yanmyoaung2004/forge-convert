@@ -137,6 +137,27 @@ pub trait PdfToDocx: Send + Sync {
     ) -> Result<Vec<u8>>;
 }
 
+/// PDF merge: concatenate pages of several PDFs in order (v0.4.0).
+pub trait PdfMerger: Send + Sync {
+    /// Merge `pdfs` (each a full PDF) into one PDF, pages in input order.
+    fn merge(&self, pdfs: &[&[u8]]) -> Result<Vec<u8>>;
+}
+
+/// PDF size compression level (v0.4.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PdfCompressLevel {
+    /// Drop orphaned objects only (always safe, modest savings).
+    Light,
+    /// Orphans + recompress content streams (better savings, slower).
+    #[default]
+    Balanced,
+}
+
+/// PDF compress: shrink file size without changing pages (v0.4.0).
+pub trait PdfCompressor: Send + Sync {
+    /// Compress `pdf_bytes` at `level`, return new PDF bytes.
+    fn compress(&self, pdf_bytes: &[u8], level: PdfCompressLevel) -> Result<Vec<u8>>;
+}
 /// Persist + query job records (engine-tested via in-memory fake;
 /// SQLite adapter lands in Phase 9 behind this port).
 pub trait JobRepository: Send + Sync {

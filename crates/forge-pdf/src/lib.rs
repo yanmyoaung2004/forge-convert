@@ -5,8 +5,8 @@
 //! renderer is qualified (hayro vs pdfium-render — see docs/PLAN.md).
 
 use forge_core::{
-    CanonicalImage, ForgeError, PageFit, PageRange, PdfRenderer, PdfSplitter, PdfToDocx,
-    PdfWriteSpec, PdfWriter, PixelFormat, Result,
+    CanonicalImage, ForgeError, PageFit, PageRange, PdfCompressLevel, PdfCompressor, PdfMerger,
+    PdfRenderer, PdfSplitter, PdfToDocx, PdfWriteSpec, PdfWriter, PixelFormat, Result,
 };
 
 /// Max decompressed bytes per page for text extraction (bomb guard;
@@ -102,6 +102,63 @@ impl PdfSplitter for LopdfSplitter {
     }
 }
 
+/// PDF merge over printpdf parse + append (v0.4.0 plan Phase A).
+///
+/// Each input parses via printpdf's own deserializer (handles its own
+/// output AND foreign PDFs: fonts/XObjects re-resolved per document), then
+/// `append_document` concatenates pages + merges resources/bookmarks.
+/// Empty list / garbage bytes → structured errors, never panic.
+#[derive(Debug, Default)]
+pub struct LopdfMerger;
+
+impl PdfMerger for LopdfMerger {
+    fn merge(&self, pdfs: &[&[u8]]) -> Result<Vec<u8>> {
+        if pdfs.is_empty() {
+            return Err(ForgeError::InvalidConfiguration(
+                "pdf-merge needs at least one input".to_string(),
+            ));
+        }
+        let mut merged: Option<printpdf::PdfDocument> = None;
+        for (i, bytes) in pdfs.iter().enumerate() {
+            let mut warnings = Vec::new();
+            let opts = printpdf::PdfParseOptions::default();
+            let doc = printpdf::deserialize::parse_pdf_from_bytes(bytes, &opts, &mut warnings)
+                .map_err(|e| ForgeError::PdfReadFailed(format!("input {}: {e}", i + 1)))?;
+            match &mut merged {
+                None => merged = Some(doc),
+                Some(first) => first.append_document(doc),
+            }
+        }
+        let doc = merged.expect("non-empty checked above");
+        Ok(doc.save(&printpdf::PdfSaveOptions::default(), &mut Vec::new()))
+    }
+}
+
+/// PDF compress over lopdf prune + recompress (v0.4.0 plan Phase A).
+///
+/// Light: `prune_objects` (drop orphans left by splits/edits) — always safe.
+/// Balanced: + `compress()` (Flate-recompress content streams) — better
+/// savings, same pages. Output always a valid PDF via `save_to`.
+#[derive(Debug, Default)]
+pub struct LopdfCompressor;
+
+impl PdfCompressor for LopdfCompressor {
+    fn compress(&self, pdf_bytes: &[u8], level: PdfCompressLevel) -> Result<Vec<u8>> {
+        let mut doc = lopdf::Document::load_mem(pdf_bytes)
+            .map_err(|e| ForgeError::PdfReadFailed(e.to_string()))?;
+        if doc.get_pages().is_empty() {
+            return Err(ForgeError::InvalidFile("PDF has no pages".to_string()));
+        }
+        doc.prune_objects();
+        if level == PdfCompressLevel::Balanced {
+            doc.compress();
+        }
+        let mut out = Vec::new();
+        doc.save_to(&mut out)
+            .map_err(|e| ForgeError::PdfWriteFailed(e.to_string()))?;
+        Ok(out)
+    }
+}
 /// PDF → .docx: position-faithful, styled, Unicode-safe export.
 ///
 /// ilovepdf-class fidelity (local, no OCR):
@@ -1359,5 +1416,36 @@ mod tests {
         assert!(xml.contains("w:sz"), "font size lost");
         // CJK-safe fonts on eastAsia so Word renders Myanmar/Japanese.
         assert!(xml.contains("w:eastAsia"), "eastAsia font missing");
+    }
+
+    #[test]
+    fn test_merge_concatenates_pages_in_order() {
+        let merger = LopdfMerger;
+        let one = text_pdf(&["page one"]);
+        let two = text_pdf(&["page two", "page three"]);
+        let out = merger.merge(&[&one, &two]).unwrap();
+        assert_eq!(&out[0..4], b"%PDF");
+        assert_eq!(LopdfSplitter.page_count(&out).unwrap(), 3);
+    }
+
+    #[test]
+    fn test_merge_rejects_empty_and_garbage() {
+        let merger = LopdfMerger;
+        assert!(merger.merge(&[]).is_err());
+        assert!(merger.merge(&[b"%PDF-1.7 garbage"]).is_err());
+        let one = text_pdf(&["ok"]);
+        assert!(merger.merge(&[&one, b"nope"]).is_err());
+    }
+
+    #[test]
+    fn test_compress_keeps_valid_pdf() {
+        let comp = LopdfCompressor;
+        let src = three_page_pdf();
+        for level in [PdfCompressLevel::Light, PdfCompressLevel::Balanced] {
+            let out = comp.compress(&src, level).unwrap();
+            assert_eq!(&out[0..4], b"%PDF");
+            assert_eq!(LopdfSplitter.page_count(&out).unwrap(), 3);
+        }
+        assert!(comp.compress(b"garbage", PdfCompressLevel::Light).is_err());
     }
 }

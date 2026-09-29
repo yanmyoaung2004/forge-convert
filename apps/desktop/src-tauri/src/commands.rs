@@ -652,8 +652,6 @@ pub fn pdf_to_docx(args: PdfToDocxArgs) -> CommandResult<String> {
     fs.write_atomic(&target, &out_bytes)
         .map_err(CommandError::from)?;
     Ok(target.display().to_string())
-}
-
 /// `pdf_page_count` — total pages (drives the desktop page-count line).
 #[tauri::command]
 pub fn pdf_page_count(input: String) -> CommandResult<u32> {
@@ -664,6 +662,119 @@ pub fn pdf_page_count(input: String) -> CommandResult<u32> {
     LopdfSplitter.page_count(&bytes).map_err(CommandError::from)
 }
 
+/// `merge_pdfs` — concatenate PDFs in order. Default: `{first-stem}-merged.pdf`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct MergePdfsArgs {
+    inputs: Vec<String>,
+    output: Option<String>,
+    on_collision: Option<String>,
+}
+
+#[tauri::command]
+pub fn merge_pdfs(args: MergePdfsArgs) -> CommandResult<String> {
+    use forge_core::PdfMerger as _;
+    use forge_pdf::LopdfMerger;
+    if args.inputs.is_empty() {
+        return Err(
+            ForgeError::InvalidConfiguration("at least one input is required".to_string()).into(),
+        );
+    }
+    let fs = StdFileSystem;
+    let mut bufs: Vec<Vec<u8>> = Vec::with_capacity(args.inputs.len());
+    for input in &args.inputs {
+        let path = PathBuf::from(input);
+        let bytes = fs.read(&path).map_err(CommandError::from)?;
+        let detected =
+            forge_core::detect_input_format(&path, Some(&bytes)).map_err(CommandError::from)?;
+        if detected != ImageFormat::Pdf {
+            return Err(ForgeError::UnsupportedFormat(format!(
+                "merge_pdfs needs PDF inputs, got {} for {input}",
+                detected.mime_type()
+            ))
+            .into());
+        }
+        bufs.push(bytes);
+    }
+    let refs: Vec<&[u8]> = bufs.iter().map(Vec::as_slice).collect();
+    let out_bytes = LopdfMerger.merge(&refs).map_err(CommandError::from)?;
+    let first = PathBuf::from(&args.inputs[0]);
+    let candidate = match args.output {
+        Some(out) => PathBuf::from(out),
+        None => {
+            let stem = forge_core::canonical_stem_of(&first);
+            let dir = first
+                .parent()
+                .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
+            dir.join(format!("{stem}-merged.pdf"))
+        }
+    };
+    let policy = parse_collision(args.on_collision.as_deref())?;
+    let target = forge_engine::apply_collision(&candidate, policy).map_err(CommandError::from)?;
+    let Some(target) = target else {
+        return Err(ForgeError::OutputExists(candidate).into());
+    };
+    fs.write_atomic(&target, &out_bytes)
+        .map_err(CommandError::from)?;
+    Ok(target.display().to_string())
+}
+
+/// `compress_pdf` — prune orphans (light) or + recompress streams (balanced).
+#[derive(Debug, Deserialize)]
+pub(crate) struct CompressPdfArgs {
+    input: String,
+    level: Option<String>,
+    output: Option<String>,
+    on_collision: Option<String>,
+}
+
+#[tauri::command]
+pub fn compress_pdf(args: CompressPdfArgs) -> CommandResult<String> {
+    use forge_core::{PdfCompressLevel, PdfCompressor as _};
+    use forge_pdf::LopdfCompressor;
+    let input = PathBuf::from(&args.input);
+    let fs = StdFileSystem;
+    let bytes = fs.read(&input).map_err(CommandError::from)?;
+    let detected =
+        forge_core::detect_input_format(&input, Some(&bytes)).map_err(CommandError::from)?;
+    if detected != ImageFormat::Pdf {
+        return Err(ForgeError::UnsupportedFormat(format!(
+            "compress_pdf needs a PDF input, got {}",
+            detected.mime_type()
+        ))
+        .into());
+    }
+    let level = match args.level.as_deref().unwrap_or("balanced").to_ascii_lowercase().as_str() {
+        "light" => PdfCompressLevel::Light,
+        "balanced" => PdfCompressLevel::Balanced,
+        other => {
+            return Err(ForgeError::InvalidConfiguration(format!(
+                "unknown compress level {other:?} (choose: light, balanced)"
+            ))
+            .into());
+        }
+    };
+    let out_bytes = LopdfCompressor
+        .compress(&bytes, level)
+        .map_err(CommandError::from)?;
+    let candidate = match args.output {
+        Some(out) => PathBuf::from(out),
+        None => {
+            let stem = forge_core::canonical_stem_of(&input);
+            let dir = input
+                .parent()
+                .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
+            dir.join(format!("{stem}-compressed.pdf"))
+        }
+    };
+    let policy = parse_collision(args.on_collision.as_deref())?;
+    let target = forge_engine::apply_collision(&candidate, policy).map_err(CommandError::from)?;
+    let Some(target) = target else {
+        return Err(ForgeError::OutputExists(candidate).into());
+    };
+    fs.write_atomic(&target, &out_bytes)
+        .map_err(CommandError::from)?;
+    Ok(target.display().to_string())
+}
 /// `list_presets` — built-in preset catalogue for the UI pickers.
 #[derive(Debug, Serialize)]
 pub(crate) struct PresetInfo {

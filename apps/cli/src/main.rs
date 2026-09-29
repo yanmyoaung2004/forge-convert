@@ -186,6 +186,32 @@ enum Command {
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
     },
+    /// Merge several PDFs in order (pages concatenated).
+    PdfMerge {
+        /// Input PDFs (at least one).
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        /// Output PDF file (default: `{first-stem}-merged.pdf` beside first input).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
+    /// Compress a PDF (prune orphans; balanced also recompresses streams).
+    PdfCompress {
+        /// Input PDF.
+        input: PathBuf,
+        /// Compression effort.
+        #[arg(long, value_enum, default_value_t = CliCompress::Balanced)]
+        level: CliCompress,
+        /// Output PDF file (default: `{stem}-compressed.pdf` beside input).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
     Info {
         /// Input file.
         input: PathBuf,
@@ -278,6 +304,22 @@ impl CliCollision {
     }
 }
 
+/// PDF compression effort (maps 1:1 to domain `PdfCompressLevel`).
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+enum CliCompress {
+    Light,
+    #[default]
+    Balanced,
+}
+
+impl CliCompress {
+    fn to_domain(self) -> forge_core::PdfCompressLevel {
+        match self {
+            Self::Light => forge_core::PdfCompressLevel::Light,
+            Self::Balanced => forge_core::PdfCompressLevel::Balanced,
+        }
+    }
+}
 /// Stderr progress sink (stdout stays clean for scripts).
 struct StderrSink;
 
@@ -686,6 +728,112 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 &input,
                 &target,
                 ImageFormat::Docx,
+                &ConversionOptions::default(),
+                0,
+            );
+            Ok(())
+        }
+        Command::PdfMerge {
+            inputs,
+            output,
+            on_collision,
+        } => {
+            use forge_core::PdfMerger as _;
+            use forge_pdf::LopdfMerger;
+            let mut bufs: Vec<Vec<u8>> = Vec::with_capacity(inputs.len());
+            for input in &inputs {
+                let bytes = StdFileSystem.read(input)?;
+                let detected = forge_core::detect_input_format(input, Some(&bytes))?;
+                if detected != ImageFormat::Pdf {
+                    return Err(ForgeError::UnsupportedFormat(format!(
+                        "pdf-merge needs PDF inputs, got {} for {}",
+                        detected.mime_type(),
+                        input.display()
+                    )));
+                }
+                bufs.push(bytes);
+            }
+            let refs: Vec<&[u8]> = bufs.iter().map(Vec::as_slice).collect();
+            let out_bytes = LopdfMerger.merge(&refs)?;
+            let first = &inputs[0];
+            let candidate = output.unwrap_or_else(|| {
+                let stem = forge_core::canonical_stem_of(first);
+                let dir = first
+                    .parent()
+                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+                dir.join(format!("{stem}-merged.pdf"))
+            });
+            let target = resolve_explicit_output(&candidate, on_collision.to_policy())?;
+            let Some(target) = target else {
+                println!("{}", candidate.display());
+                eprintln!("skipped (exists): {}", candidate.display());
+                return Ok(());
+            };
+            let before: u64 = bufs.iter().map(|b| b.len() as u64).sum();
+            StdFileSystem.write_atomic(&target, &out_bytes)?;
+            println!("{}", target.display());
+            eprintln!(
+                "merged {} files: before: {before} bytes; after: {} bytes",
+                inputs.len(),
+                out_bytes.len()
+            );
+            record_history(
+                "pdf-merge",
+                first,
+                &target,
+                ImageFormat::Pdf,
+                &ConversionOptions::default(),
+                0,
+            );
+            Ok(())
+        }
+        Command::PdfCompress {
+            input,
+            level,
+            output,
+            on_collision,
+        } => {
+            use forge_core::PdfCompressor as _;
+            use forge_pdf::LopdfCompressor;
+            let bytes = StdFileSystem.read(&input)?;
+            let detected = forge_core::detect_input_format(&input, Some(&bytes))?;
+            if detected != ImageFormat::Pdf {
+                return Err(ForgeError::UnsupportedFormat(format!(
+                    "pdf-compress needs a PDF input, got {}",
+                    detected.mime_type()
+                )));
+            }
+            let out_bytes = LopdfCompressor.compress(&bytes, level.to_domain())?;
+            let candidate = output.unwrap_or_else(|| {
+                let stem = forge_core::canonical_stem_of(&input);
+                let dir = input
+                    .parent()
+                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+                dir.join(format!("{stem}-compressed.pdf"))
+            });
+            let target = resolve_explicit_output(&candidate, on_collision.to_policy())?;
+            let Some(target) = target else {
+                println!("{}", candidate.display());
+                eprintln!("skipped (exists): {}", candidate.display());
+                return Ok(());
+            };
+            StdFileSystem.write_atomic(&target, &out_bytes)?;
+            println!("{}", target.display());
+            let saved = if bytes.len() > 0 && out_bytes.len() < bytes.len() {
+                (bytes.len() - out_bytes.len()) as f64 / bytes.len() as f64 * 100.0
+            } else {
+                0.0
+            };
+            eprintln!(
+                "compressed: before: {} bytes; after: {} bytes; saved: {saved:.1}%",
+                bytes.len(),
+                out_bytes.len()
+            );
+            record_history(
+                "pdf-compress",
+                &input,
+                &target,
+                ImageFormat::Pdf,
                 &ConversionOptions::default(),
                 0,
             );

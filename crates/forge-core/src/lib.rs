@@ -21,5 +21,6 @@ pub use error::{ForgeError, Result};
 pub use ports::{
     CancelToken, Clock, ConversionEngine, FileSystem, HistoryEntry, HistoryStore, ImageDecoder,
     ImageEncoder, JobEventSink, JobRepository, JobSnapshot, NeverCancel, Orientation, PageFit,
-    PageSizeMm, PdfRenderer, PdfSplitter, PdfToDocx, PdfWriteSpec, PdfWriter, TransformStep,
+    PageSizeMm, PdfCompressLevel, PdfCompressor, PdfMerger, PdfRenderer, PdfSplitter, PdfToDocx,
+    PdfWriteSpec, PdfWriter, TransformStep,
 };

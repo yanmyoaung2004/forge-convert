@@ -217,9 +217,9 @@ function duplicateSelection(): void {
 function copySelection(): void {
   const els = selection.value
     .map((id) => doc.value.elements.find((e) => e.id === id))
-    .filter((e): e is DiagramElement => !!e)
-    .map((e) => JSON.parse(JSON.stringify(e)) as DiagramElement);
-  const ids = new Set(els.map((e) => e.id));
+    /// Optimize for the web (WebP q80, metadata stripped) with savings report.
+    Optimize {
+        /// Input image.
   const conns = doc.value.connections
     .filter((c) => ids.has(c.source.node) && ids.has(c.target.node))
     .map((c) => JSON.parse(JSON.stringify(c)) as DiagramConnection);
