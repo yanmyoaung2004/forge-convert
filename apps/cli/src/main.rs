@@ -246,6 +246,25 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Render text as QR PNG (pure-Rust `qrcode` + `image`).
+    Qr {
+        /// Text to encode (max 2048 bytes).
+        text: String,
+        /// Output PNG file (default: `qr.png` in cwd).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Longest side in px, 128–1024 (default 256).
+        #[arg(long, default_value_t = 256)]
+        size: u32,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
+    /// SHA-256 hex of a file (streamed; 512 MiB cap).
+    Hash {
+        /// Input file.
+        input: PathBuf,
+    },
 }
 
 /// CLI image formats (PDF only where it makes sense per command).
@@ -832,7 +851,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             };
             StdFileSystem.write_atomic(&target, &out_bytes)?;
             println!("{}", target.display());
-            let saved = if bytes.len() > 0 && out_bytes.len() < bytes.len() {
+            let saved = if !bytes.is_empty() && out_bytes.len() < bytes.len() {
                 (bytes.len() - out_bytes.len()) as f64 / bytes.len() as f64 * 100.0
             } else {
                 0.0
@@ -1024,6 +1043,53 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 &ConversionOptions::default(),
                 0,
             );
+            Ok(())
+        }
+        Command::Qr {
+            text,
+            output,
+            size,
+            on_collision,
+        } => {
+            if text.is_empty() {
+                return Err(ForgeError::InvalidConfiguration(
+                    "qr needs non-empty text".to_string(),
+                ));
+            }
+            if text.len() > 2048 {
+                return Err(ForgeError::InvalidConfiguration(
+                    "qr text over 2048 bytes (use a URL shortener)".to_string(),
+                ));
+            }
+            let size = size.clamp(128, 1024);
+            let code = qrcode::QrCode::new(text.as_bytes())
+                .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
+            let img = code
+                .render::<image::Luma<u8>>()
+                .min_dimensions(size, size)
+                .build();
+            let candidate = output.unwrap_or_else(|| PathBuf::from("qr.png"));
+            let target = resolve_explicit_output(&candidate, on_collision.to_policy())?;
+            let Some(target) = target else {
+                println!("{}", candidate.display());
+                eprintln!("skipped (exists): {}", candidate.display());
+                return Ok(());
+            };
+            let mut png: Vec<u8> = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .map_err(|e| ForgeError::EncodeFailed(format!("qr png: {e}")))?;
+            StdFileSystem.write_atomic(&target, &png)?;
+            println!("{}", target.display());
+            Ok(())
+        }
+        Command::Hash { input } => {
+            use sha2::{Digest, Sha256};
+            let bytes = StdFileSystem.read(&input)?;
+            let mut hasher = Sha256::new();
+            for chunk in bytes.chunks(64 * 1024) {
+                hasher.update(chunk);
+            }
+            println!("{:x}", hasher.finalize());
             Ok(())
         }
     }

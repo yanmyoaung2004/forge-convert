@@ -24,9 +24,12 @@ pub fn run() {
             commands::compress_pdf,
             commands::favicon,
             commands::list_presets,
+            commands::get_history,
             diagram::save_diagram,
             diagram::load_diagram,
             diagram::export_svg_file,
+            diagram::qr_png,
+            diagram::hash_file,
         ])
         .run(tauri::generate_context!())
         .expect("ForgeConvert desktop failed to start");

@@ -77,3 +77,48 @@ pub fn export_svg_file(args: ExportSvgArgs) -> DiagramResult<String> {
         .map_err(CommandError::from)?;
     Ok(path.display().to_string())
 }
+
+/// `qr_png` — render text as QR PNG bytes, written to the OS temp dir.
+/// Returns the written path (UI reveals it). Pure-Rust `qrcode` + `image`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct QrArgs {
+    text: String,
+    size: Option<u32>,
+}
+
+#[tauri::command]
+pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
+    use image::Luma;
+    if args.text.is_empty() {
+        return Err(ForgeError::InvalidConfiguration("qr needs non-empty text".to_string()).into());
+    }
+    if args.text.len() > 2048 {
+        return Err(ForgeError::InvalidConfiguration(
+            "qr text over 2048 bytes (use a URL shortener)".to_string(),
+        )
+        .into());
+    }
+    let size = args.size.unwrap_or(256).clamp(128, 1024);
+    let code = qrcode::QrCode::new(args.text.as_bytes())
+        .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
+    let img = code.render::<Luma<u8>>().min_dimensions(size, size).build();
+    let path = std::env::temp_dir().join(format!("forgeconvert-qr-{size}.png"));
+    img.save(&path)
+        .map_err(|e| ForgeError::EncodeFailed(format!("qr png: {e}")))?;
+    Ok(path.display().to_string())
+}
+
+/// `hash_file` — streaming SHA-256 of a file (hex). Bounded reads via
+/// `StdFileSystem` (512 MiB cap); SubtleCrypto can't reach files.
+#[tauri::command]
+pub fn hash_file(path: String) -> DiagramResult<String> {
+    use sha2::{Digest, Sha256};
+    let fs_path = PathBuf::from(&path);
+    let bytes = StdFileSystem.read(&fs_path).map_err(CommandError::from)?;
+    // Chunked update (constant hasher memory even at the 512 MiB cap).
+    let mut hasher = Sha256::new();
+    for chunk in bytes.chunks(64 * 1024) {
+        hasher.update(chunk);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
