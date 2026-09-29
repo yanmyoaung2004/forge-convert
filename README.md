@@ -58,19 +58,19 @@ pnpm --dir dev/apps/desktop exec vite build
 pnpm --dir dev/apps/desktop exec tauri dev
 ```
 
-## [Download — v0.2.1](https://github.com/yanmyoaung2004/forge-convert/releases/tag/v0.2.1)
+## [Download — v0.3.0](https://github.com/yanmyoaung2004/forge-convert/releases/tag/v0.3.0)
 
 | Asset | What | How to run |
 |---|---|---|
-| [forgeconvert-windows-x86_64.exe](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.2.1/forgeconvert-windows-x86_64.exe) | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
-| [forgeconvert-linux-x86_64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.2.1/forgeconvert-linux-x86_64) | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
-| [forgeconvert-macos-aarch64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.2.1/forgeconvert-macos-aarch64) | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
-| `ForgeConvert_0.2.1_x64_en-US.msi` | Desktop installer | Double-click (per-machine install) |
-| `ForgeConvert_0.2.1_x64-setup.exe` | Desktop installer | Double-click (NSIS wizard) |
+| [forgeconvert-windows-x86_64.exe](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.3.0/forgeconvert-windows-x86_64.exe) | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
+| [forgeconvert-linux-x86_64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.3.0/forgeconvert-linux-x86_64) | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
+| [forgeconvert-macos-aarch64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.3.0/forgeconvert-macos-aarch64) | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
+| `ForgeConvert_0.3.0_x64_en-US.msi` | Desktop installer (SVG Diagram included) | Double-click (per-machine install) |
+| `ForgeConvert_0.3.0_x64-setup.exe` | Desktop installer (SVG Diagram included) | Double-click (NSIS wizard) |
 
-> v0.2.1: same features as v0.2.0 (opener fix, batch parity, EXIF rotate, drag-drop + cancel + progress + savings) + release-pipeline fix so the MSI/NSIS installers actually attach. v0.2.0 published CLI-only because `publish.files: dist/*` missed the nested `msi/` + `nsis/` artifact dirs; now `dist/**/*`. App versions bumped 0.1.0 → 0.2.1 so installer filenames match the tag.
+> v0.3.0: PDF split (`pdf-split --pages 2-5`) + PDF → Word (`pdf-to-docx`, Unicode-safe, position-faithful) + **SVG Diagram editor** (27 blocks incl. UML/ERD, connections, undo/redo, auto-layout, templates, save/load, bidirectional SVG import/export). Desktop gains Diagram tab with pan/select tools, responsive layout, realistic icons.
 
-Cutting the next release (maintainers): `git tag v0.3.0 && git push origin v0.3.0` — CI rebuilds everything above automatically.
+Cutting the next release (maintainers): `git tag v0.4.0 && git push origin v0.4.0` — CI rebuilds everything above automatically.
 ## Architecture
 
 Clean layered + hexagonal (ports & adapters), dependencies point inward:
