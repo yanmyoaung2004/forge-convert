@@ -196,6 +196,16 @@ export const api = {
   loadDiagram: (path: string) => invoke<{ path: string; json: string }>("load_diagram", { path }),
   /** Write generated SVG string to disk (refuses non-SVG content). */
   exportSvg: (path: string, svg: string) => invoke<string>("export_svg_file", { args: { path, svg } }),
+  /** Favicon set: favicon.ico + sized PNGs + link snippet. */
+  favicon: (args: { input: string; outputDir?: string; sizes?: string }) =>
+    invoke<{ outputs: string[]; snippet: string }>("favicon", {
+      args: {
+        input: args.input,
+        output_dir: args.outputDir ?? null,
+        sizes: args.sizes ?? null,
+        on_collision: "rename",
+      },
+    }),
   presets: () => invoke<PresetInfo[]>("list_presets"),
   history: (limit?: number) =>
     invoke<HistoryRow[]>("get_history", { limit: limit ?? null }),

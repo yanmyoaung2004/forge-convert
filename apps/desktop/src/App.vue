@@ -321,6 +321,23 @@ async function cancelConvert() {
   }
 }
 
+const faviconSnippet = ref<string | null>(null);
+
+async function runFavicon() {
+  if (files.value.length === 0 || busy.value) return;
+  busy.value = true;
+  error.value = null;
+  faviconSnippet.value = null;
+  try {
+    const done = await api.favicon({ input: files.value[0], outputDir: outputDir.value ?? undefined });
+    faviconSnippet.value = `Wrote ${done.outputs.length} files:\n${done.outputs.join("\n")}\n\n${done.snippet}`;
+    history.value = await api.history(20);
+  } catch (err) {
+    error.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  } finally {
+    busy.value = false;
+  }
+}
 function savingsText(inputBytes: number, outputBytes: number): string {
   if (inputBytes <= 0) return formatBytes(outputBytes);
   const saved = ((inputBytes - outputBytes) / inputBytes) * 100;
@@ -550,6 +567,15 @@ onMounted(() => {
         </ul>
         <p v-if="revealFailed" class="error">{{ revealFailed }}</p>
       </div>
+      <div class="controls card">
+        <div class="drop-row">
+          <button class="btn" @click="runFavicon">🎨 Favicon set (ico + PNGs)</button>
+        </div>
+        <p class="dim">Generates favicon.ico (16/32/48) + icon PNGs + HTML snippet from the first selected image.</p>
+        <div v-if="faviconSnippet" class="result card">
+          <pre class="code-snippet">{{ faviconSnippet }}</pre>
+        </div>
+      </div>
     </section>
 
     <section v-if="tab === 'pdf' && !backendError" class="panel">
@@ -565,7 +591,6 @@ onMounted(() => {
         </div>
       </div>
       <div v-else class="empty">
-        <div class="empty-icon">📄</div>
         <p>Pick a PDF to split pages or export to Word (.docx).</p>
       </div>
       <div v-if="pdfFile" class="controls card">

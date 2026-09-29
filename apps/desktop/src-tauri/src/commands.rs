@@ -783,7 +783,92 @@ pub fn compress_pdf(args: CompressPdfArgs) -> CommandResult<String> {
         .map_err(CommandError::from)?;
     Ok(target.display().to_string())
 }
-/// `list_presets` — built-in preset catalogue for the UI pickers.
+
+/// `favicon` — icon set from one image: favicon.ico (16/32/48) + sized PNGs.
+/// Returns written paths (ico first), so the UI reveals the folder + snippet.
+#[derive(Debug, Deserialize)]
+pub(crate) struct FaviconArgs {
+    input: String,
+    output_dir: Option<String>,
+    sizes: Option<String>,
+    on_collision: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct FaviconDone {
+    outputs: Vec<String>,
+    snippet: String,
+}
+
+#[tauri::command]
+pub fn favicon(args: FaviconArgs) -> CommandResult<FaviconDone> {
+    use forge_image::{ForgeImageDecoder, ForgeImageEncoder};
+    let input = PathBuf::from(&args.input);
+    let fs = StdFileSystem;
+    let bytes = fs.read(&input).map_err(CommandError::from)?;
+    let format =
+        forge_core::detect_input_format(&input, Some(&bytes)).map_err(CommandError::from)?;
+    let image = ForgeImageDecoder
+        .decode(&bytes, Some(format))
+        .map_err(CommandError::from)?;
+    let wanted: Vec<u32> = args
+        .sizes
+        .as_deref()
+        .unwrap_or("16,32,48,180,192,512")
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .parse::<u32>()
+                .map_err(|_| ForgeError::InvalidConfiguration(format!("bad favicon size: {s:?}")))
+        })
+        .collect::<Result<Vec<u32>, ForgeError>>()
+        .map_err(CommandError::from)?;
+    let icons = ForgeImageEncoder::generate_icons(&image, &wanted).map_err(CommandError::from)?;
+    let out_dir = match args.output_dir {
+        Some(dir) => PathBuf::from(dir),
+        None => input
+            .parent()
+            .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf)
+            .join("icons"),
+    };
+    let policy = parse_collision(args.on_collision.as_deref())?;
+    let ico_small: Vec<(u32, Vec<u8>)> = icons.iter().filter(|(s, _)| *s <= 256).cloned().collect();
+    let ico_bytes = ForgeImageEncoder::pack_ico(&ico_small).map_err(CommandError::from)?;
+    let mut outputs: Vec<String> = Vec::new();
+    let mut snippet = String::from("<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">");
+    let ico_candidate = out_dir.join("favicon.ico");
+    if let Some(t) =
+        forge_engine::apply_collision(&ico_candidate, policy).map_err(CommandError::from)?
+    {
+        fs.write_atomic(&t, &ico_bytes)
+            .map_err(CommandError::from)?;
+        outputs.push(t.display().to_string());
+    }
+    for (size, png) in &icons {
+        let name = if *size == 180 {
+            "apple-touch-icon.png".to_string()
+        } else {
+            format!("icon-{size}.png")
+        };
+        let candidate = out_dir.join(&name);
+        if let Some(t) =
+            forge_engine::apply_collision(&candidate, policy).map_err(CommandError::from)?
+        {
+            fs.write_atomic(&t, png).map_err(CommandError::from)?;
+            outputs.push(t.display().to_string());
+            if *size == 180 {
+                snippet
+                    .push_str("\n<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\">");
+            } else if *size >= 192 {
+                snippet.push_str(&format!(
+                    "\n<link rel=\"icon\" type=\"image/png\" sizes=\"{size}x{size}\" href=\"/{name}\">"
+                ));
+            }
+        }
+    }
+    Ok(FaviconDone { outputs, snippet })
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct PresetInfo {
     key: String,

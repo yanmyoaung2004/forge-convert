@@ -212,6 +212,19 @@ enum Command {
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
     },
+    /// Generate favicon set: favicon.ico (16/32/48) + sized PNGs + link snippet.
+    Favicon {
+        /// Input image (square works best; auto-resized with Lanczos3).
+        input: PathBuf,
+        /// Output directory (default: `<input-dir>/icons`).
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// Comma-separated sizes 16–512 (default: `16,32,48,180,192,512`).
+        #[arg(long, default_value_t = String::from("16,32,48,180,192,512"))]
+        sizes: String,
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
     Info {
         /// Input file.
         input: PathBuf,
@@ -931,6 +944,86 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                     entry.duration_ms
                 );
             }
+            Ok(())
+        }
+        Command::Favicon {
+            input,
+            output_dir,
+            sizes,
+            on_collision,
+        } => {
+            use forge_image::ForgeImageEncoder;
+            let bytes = StdFileSystem.read(&input)?;
+            let format = forge_core::detect_input_format(&input, Some(&bytes))?;
+            let image = ForgeImageDecoder.decode(&bytes, Some(format))?;
+            let wanted: Result<Vec<u32>, ForgeError> = sizes
+                .split(',')
+                .map(|s| {
+                    s.trim().parse::<u32>().map_err(|_| {
+                        ForgeError::InvalidConfiguration(format!("bad favicon size: {s:?}"))
+                    })
+                })
+                .collect();
+            let wanted = wanted?;
+            let icons = ForgeImageEncoder::generate_icons(&image, &wanted)?;
+            let out_dir = output_dir.unwrap_or_else(|| {
+                input
+                    .parent()
+                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+                    .join("icons")
+            });
+            let policy = on_collision.to_policy();
+            // favicon.ico from the ≤256 frames.
+            let ico_small: Vec<(u32, Vec<u8>)> =
+                icons.iter().filter(|(s, _)| *s <= 256).cloned().collect();
+            let ico_bytes = ForgeImageEncoder::pack_ico(&ico_small)?;
+            let ico_path = out_dir.join("favicon.ico");
+            let ico_target = resolve_explicit_output(&ico_path, policy)?;
+            let mut written: Vec<(u32, PathBuf)> = Vec::new();
+            if let Some(t) = ico_target {
+                StdFileSystem.write_atomic(&t, &ico_bytes)?;
+                println!("{}", t.display());
+            }
+            for (size, png) in &icons {
+                let name = if *size == 180 {
+                    "apple-touch-icon.png".to_string()
+                } else {
+                    format!("icon-{size}.png")
+                };
+                let candidate = out_dir.join(name);
+                match resolve_explicit_output(&candidate, policy)? {
+                    Some(t) => {
+                        StdFileSystem.write_atomic(&t, png)?;
+                        println!("{}", t.display());
+                        written.push((*size, t));
+                    }
+                    None => {
+                        println!("{}", candidate.display());
+                        eprintln!("skipped (exists): {}", candidate.display());
+                    }
+                }
+            }
+            // Copy-paste HTML snippet on stdout (scripts grab paths above).
+            println!("<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">");
+            for (size, path) in &written {
+                let fname = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("icon.png");
+                if *size == 180 {
+                    println!("<link rel=\"apple-touch-icon\" href=\"/{fname}\">");
+                } else if *size >= 192 {
+                    println!("<link rel=\"icon\" type=\"image/png\" sizes=\"{size}x{size}\" href=\"/{fname}\">");
+                }
+            }
+            record_history(
+                "favicon",
+                &input,
+                &out_dir.join("favicon.ico"),
+                ImageFormat::Png,
+                &ConversionOptions::default(),
+                0,
+            );
             Ok(())
         }
     }

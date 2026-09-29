@@ -108,6 +108,64 @@ impl ForgeImageEncoder {
         ImageFormat::Bmp,
         ImageFormat::Tiff,
     ];
+
+    /// Favicon set: resize `image` to each square `size` (Lanczos3) →
+    /// PNG bytes per size. Caller writes files; ICO packing (16/32/48)
+    /// happens in [`pack_ico`]. Sizes validated 16–512, deduped, sorted.
+    pub fn generate_icons(image: &CanonicalImage, sizes: &[u32]) -> Result<Vec<(u32, Vec<u8>)>> {
+        if sizes.is_empty() {
+            return Err(ForgeError::InvalidConfiguration(
+                "favicon needs at least one size".to_string(),
+            ));
+        }
+        let mut sorted: Vec<u32> = sizes.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        for size in &sorted {
+            if !(16..=512).contains(size) {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "favicon size must be 16-512, got {size}"
+                )));
+            }
+        }
+        let mut out = Vec::with_capacity(sorted.len());
+        for size in sorted {
+            let dims = ImageDimensions::new(size, size)
+                .map_err(|_| ForgeError::InvalidConfiguration(format!("bad icon size {size}")))?;
+            let resized = resize_canonical(image, dims, ResizeFilter::Lanczos3)?;
+            let png = encode_png(&resized)?;
+            out.push((size, png));
+        }
+        Ok(out)
+    }
+
+    /// Pack pre-rendered PNGs (keyed by size) into ICO bytes.
+    /// Only sizes ≤256 qualify per ICO spec; 16/32/48 typical.
+    pub fn pack_ico(pngs: &[(u32, Vec<u8>)]) -> Result<Vec<u8>> {
+        use image::codecs::ico::{IcoEncoder, IcoFrame};
+        use image::ExtendedColorType;
+        let mut frames: Vec<IcoFrame<'_>> = Vec::new();
+        // Borrow discipline: PNG buffers live in `pngs`; frames borrow them.
+        for (size, bytes) in pngs {
+            if *size > 256 {
+                continue;
+            }
+            let frame =
+                IcoFrame::with_encoded(bytes.as_slice(), *size, *size, ExtendedColorType::Rgba8)
+                    .map_err(|e| ForgeError::EncodeFailed(format!("ico frame {size}: {e}")))?;
+            frames.push(frame);
+        }
+        if frames.is_empty() {
+            return Err(ForgeError::InvalidConfiguration(
+                "ICO needs at least one size ≤256 (e.g. 16, 32, 48)".to_string(),
+            ));
+        }
+        let mut out = Vec::new();
+        IcoEncoder::new(&mut out)
+            .encode_images(&frames)
+            .map_err(|e| ForgeError::EncodeFailed(format!("ico pack: {e}")))?;
+        Ok(out)
+    }
 }
 
 impl ImageEncoder for ForgeImageEncoder {
@@ -768,5 +826,42 @@ mod tests {
         let dyn_image = to_dynamic(&landscape).unwrap();
         let same = apply_exif_orientation(dyn_image, &jpeg_with_orientation(1));
         assert_eq!((same.width(), same.height()), (4, 2));
+    }
+
+    #[test]
+    fn test_favicon_icons_exact_dims_and_png_magic() {
+        let icons = ForgeImageEncoder::generate_icons(&rgba_fixture(), &[16, 32, 180]).unwrap();
+        assert_eq!(icons.len(), 3);
+        for (size, png) in &icons {
+            assert_eq!(
+                &png[0..8],
+                &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+            );
+            let back = ForgeImageDecoder
+                .decode(png, Some(ImageFormat::Png))
+                .unwrap();
+            assert_eq!(back.dimensions, ImageDimensions::new(*size, *size).unwrap());
+        }
+        // Dedup + sort: [48, 16, 48] → [16, 48].
+        let dedup = ForgeImageEncoder::generate_icons(&rgba_fixture(), &[48, 16, 48]).unwrap();
+        assert_eq!(
+            dedup.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+            vec![16, 48]
+        );
+        // Bad sizes rejected, never panic.
+        assert!(ForgeImageEncoder::generate_icons(&rgba_fixture(), &[]).is_err());
+        assert!(ForgeImageEncoder::generate_icons(&rgba_fixture(), &[8]).is_err());
+        assert!(ForgeImageEncoder::generate_icons(&rgba_fixture(), &[1024]).is_err());
+    }
+
+    #[test]
+    fn test_pack_ico_magic_and_size_gate() {
+        let icons = ForgeImageEncoder::generate_icons(&rgba_fixture(), &[16, 32, 48]).unwrap();
+        let ico = ForgeImageEncoder::pack_ico(&icons).unwrap();
+        // ICO magic: 00 00 01 00.
+        assert_eq!(&ico[0..4], &[0x00, 0x00, 0x01, 0x00]);
+        // Only ≤256 frames pack: all-large input errors honestly.
+        let big = ForgeImageEncoder::generate_icons(&rgba_fixture(), &[512]).unwrap();
+        assert!(ForgeImageEncoder::pack_ico(&big).is_err());
     }
 }
