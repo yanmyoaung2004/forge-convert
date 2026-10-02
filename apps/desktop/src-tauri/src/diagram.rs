@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use forge_core::{FileSystem as _, ForgeError};
 use forge_engine::StdFileSystem;
+use forge_image::ForgeImageEncoder;
 use serde::{Deserialize, Serialize};
 
 use super::commands::CommandError;
-
 type DiagramResult<T> = Result<T, CommandError>;
 
 /// `save_diagram` — write project JSON atomically (creates parent dirs).
@@ -91,7 +91,7 @@ pub(crate) struct QrArgs {
 
 #[tauri::command]
 pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
-    use forge_image::{ForgeImageEncoder, QrOutput};
+    use forge_image::QrOutput;
     let size = args.size.unwrap_or(256).clamp(128, 1024);
     let out =
         ForgeImageEncoder::encode_qr(&args.text, args.ec.as_deref(), args.format.as_deref(), size)
@@ -111,6 +111,16 @@ pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
         .write_atomic(&path, &bytes)
         .map_err(CommandError::from)?;
     Ok(path.display().to_string())
+}
+
+/// `qr_decode` — read a QR code from an image file, return its text.
+/// Shared `ForgeImageEncoder::decode_qr` (single source with the CLI).
+/// No QR in image → `InvalidFile`; undecodable pixels → `DecodeFailed`.
+#[tauri::command]
+pub fn qr_decode(path: String) -> DiagramResult<String> {
+    let fs_path = PathBuf::from(&path);
+    let bytes = StdFileSystem.read(&fs_path).map_err(CommandError::from)?;
+    ForgeImageEncoder::decode_qr(&bytes).map_err(CommandError::from)
 }
 
 /// `hash_file` — streaming SHA-256 of a file (hex). Bounded reads via

@@ -211,6 +211,8 @@ export const api = {
     invoke<string>("qr_png", { args: { text: args.text, size: args.size ?? null, ec: args.ec ?? null, format: args.format ?? null } }),
   /** SHA-256 hex of a file (streams in Rust, 512 MiB cap). */
   hashFile: (path: string) => invoke<string>("hash_file", { path }),
+  /** Decode a QR code from an image file (returns its text). */
+  qrDecode: (path: string) => invoke<string>("qr_decode", { path }),
   presets: () => invoke<PresetInfo[]>("list_presets"),
   history: (limit?: number) =>
     invoke<HistoryRow[]>("get_history", { limit: limit ?? null }),

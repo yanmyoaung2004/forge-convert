@@ -225,6 +225,33 @@ impl ForgeImageEncoder {
             ))),
         }
     }
+
+    /// QR decode, shared by CLI + desktop (single source; no duplicated limits).
+    /// Grayscale via `image`, detect via `rqrr`; first grid wins.
+    /// No QR found → `InvalidFile` (CLI exit 4); undecodable pixels → `DecodeFailed`.
+    pub fn decode_qr(bytes: &[u8]) -> Result<String> {
+        if bytes.is_empty() {
+            return Err(ForgeError::InvalidFile("empty input".to_string()));
+        }
+        let img = image::load_from_memory(bytes)
+            .map_err(|e| ForgeError::DecodeFailed(format!("qr image unreadable: {e}")))?
+            .to_luma8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        if w == 0 || h == 0 {
+            return Err(ForgeError::InvalidFile("empty image".to_string()));
+        }
+        let mut prepared = rqrr::PreparedImage::prepare(img);
+        let grids = prepared.detect_grids();
+        let Some(grid) = grids.first() else {
+            return Err(ForgeError::InvalidFile(
+                "no QR code found in image".to_string(),
+            ));
+        };
+        let (_, content) = grid
+            .decode()
+            .map_err(|e| ForgeError::DecodeFailed(format!("qr decode: {e:?}")))?;
+        Ok(content)
+    }
 }
 
 /// QR encode result: PNG bytes or SVG text (caller picks file extension).
@@ -727,6 +754,42 @@ mod tests {
         assert!(matches!(
             ForgeImageEncoder::encode_qr("", None, None, 256),
             Err(ForgeError::InvalidConfiguration(_))
+        ));
+    }
+
+    #[test]
+    fn test_qr_decode_roundtrip() {
+        for ec in ["L", "M", "Q", "H"] {
+            let out = ForgeImageEncoder::encode_qr("https://example.com/qr", Some(ec), None, 256)
+                .unwrap();
+            let QrOutput::Png(png) = out else {
+                panic!("expected PNG");
+            };
+            assert_eq!(
+                ForgeImageEncoder::decode_qr(&png).unwrap(),
+                "https://example.com/qr"
+            );
+        }
+    }
+
+    #[test]
+    fn test_qr_decode_rejects_garbage_and_qrless() {
+        // Garbage bytes: not an image at all.
+        assert!(matches!(
+            ForgeImageEncoder::decode_qr(b"definitely-not-a-qr-image"),
+            Err(ForgeError::DecodeFailed(_))
+        ));
+        // Valid image, no QR in it: reuse the RGBA fixture as PNG.
+        let png = ForgeImageEncoder
+            .encode(
+                &rgba_fixture(),
+                ImageFormat::Png,
+                &ConversionOptions::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            ForgeImageEncoder::decode_qr(&png),
+            Err(ForgeError::InvalidFile(_))
         ));
     }
 

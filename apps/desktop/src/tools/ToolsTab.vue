@@ -29,10 +29,10 @@ const qrSize = ref(256);
 const qrEc = ref("M");
 const qrFormat = ref<"png" | "svg">("png");
 const qrMsg = ref<string | null>(null);
+const qrDecoded = ref<string | null>(null);
 const hashPath = ref<string | null>(null);
 const hashOut = ref<string | null>(null);
 const toolError = ref<string | null>(null);
-
 const rxHits = computed(() => regexTest(rxPattern.value, rxFlags.value, rxText.value));
 
 function doPretty(): void {
@@ -93,6 +93,18 @@ async function doQr(): Promise<void> {
     toolError.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
   }
 }
+async function doQrDecode(): Promise<void> {
+  qrDecoded.value = null;
+  toolError.value = null;
+  try {
+    const picked = await open({ multiple: false });
+    const path = Array.isArray(picked) ? picked[0] : picked;
+    if (!path) return;
+    qrDecoded.value = await api.qrDecode(path);
+  } catch (err) {
+    toolError.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  }
+}
 async function pickHashFile(): Promise<void> {
   const picked = await open({ multiple: false });
   const path = Array.isArray(picked) ? picked[0] : picked;
@@ -102,7 +114,6 @@ async function pickHashFile(): Promise<void> {
   }
 }
 async function doHash(): Promise<void> {
-  toolError.value = null;
   if (!hashPath.value) return;
   try {
     hashOut.value = await api.hashFile(hashPath.value);
@@ -183,6 +194,10 @@ async function doHash(): Promise<void> {
           <button class="btn ghost sm" @click="doQr">Generate</button>
         </div>
         <p v-if="qrMsg" class="dim">{{ qrMsg }}</p>
+        <div class="row">
+          <button class="btn ghost sm" @click="doQrDecode">Decode image…</button>
+        </div>
+        <code v-if="qrDecoded">{{ qrDecoded }}</code>
       </div>
       <div class="panel card">
         <h3>SHA-256 file</h3>

@@ -271,6 +271,11 @@ enum Command {
         /// Input file.
         input: PathBuf,
     },
+    /// Decode a QR code from an image file (prints text to stdout).
+    QrDecode {
+        /// Input image (PNG/JPEG/WebP/BMP/TIFF).
+        input: PathBuf,
+    },
 }
 
 /// CLI image formats (PDF only where it makes sense per command).
@@ -1083,6 +1088,12 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
                 hasher.update(chunk);
             }
             println!("{:x}", hasher.finalize());
+            Ok(())
+        }
+        Command::QrDecode { input } => {
+            let bytes = StdFileSystem.read(&input)?;
+            let text = ForgeImageEncoder::decode_qr(&bytes)?;
+            println!("{text}");
             Ok(())
         }
     }

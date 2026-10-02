@@ -29,6 +29,7 @@ pub fn run() {
             diagram::load_diagram,
             diagram::export_svg_file,
             diagram::qr_png,
+            diagram::qr_decode,
             diagram::hash_file,
         ])
         .run(tauri::generate_context!())
