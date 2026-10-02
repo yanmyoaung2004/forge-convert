@@ -26,6 +26,8 @@ const rxFlags = ref("g");
 const rxText = ref("a1b22c333");
 const qrText = ref("https://example.com");
 const qrSize = ref(256);
+const qrEc = ref("M");
+const qrFormat = ref<"png" | "svg">("png");
 const qrMsg = ref<string | null>(null);
 const hashPath = ref<string | null>(null);
 const hashOut = ref<string | null>(null);
@@ -85,7 +87,7 @@ async function doQr(): Promise<void> {
   qrMsg.value = null;
   toolError.value = null;
   try {
-    const path = await api.qrPng({ text: qrText.value, size: qrSize.value });
+    const path = await api.qrPng({ text: qrText.value, size: qrSize.value, ec: qrEc.value, format: qrFormat.value });
     qrMsg.value = `Wrote ${path}`;
   } catch (err) {
     toolError.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
@@ -164,10 +166,20 @@ async function doHash(): Promise<void> {
         </ul>
       </div>
       <div class="panel card">
-        <h3>QR → PNG</h3>
+        <h3>QR → PNG/SVG</h3>
         <textarea v-model="qrText" rows="2" spellcheck="false" aria-label="QR text" />
         <div class="row">
           <label>Size <input v-model.number="qrSize" type="number" min="128" max="1024" /></label>
+          <label>EC
+            <select v-model="qrEc" aria-label="Error correction">
+              <option value="L">L (7%)</option>
+              <option value="M">M (15%)</option>
+              <option value="Q">Q (25%)</option>
+              <option value="H">H (30%)</option>
+            </select>
+          </label>
+          <button class="btn ghost sm" :class="{ on: qrFormat === 'png' }" @click="qrFormat = 'png'">PNG</button>
+          <button class="btn ghost sm" :class="{ on: qrFormat === 'svg' }" @click="qrFormat = 'svg'">SVG</button>
           <button class="btn ghost sm" @click="doQr">Generate</button>
         </div>
         <p v-if="qrMsg" class="dim">{{ qrMsg }}</p>
@@ -192,6 +204,7 @@ async function doHash(): Promise<void> {
 .panel h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
 .row { display: flex; gap: 0.4rem; align-items: center; margin: 0.4rem 0; flex-wrap: wrap; }
 textarea, input { border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.5rem; font: inherit; width: 100%; }
+select { border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.5rem; font: inherit; background: white; }
 input { width: auto; flex: 1; min-width: 0; }
 input.flags { max-width: 4rem; flex: none; }
 label { display: flex; gap: 0.4rem; align-items: center; margin: 0.3rem 0; font-size: 0.85rem; }

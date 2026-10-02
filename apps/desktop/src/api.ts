@@ -206,9 +206,9 @@ export const api = {
         on_collision: "rename",
       },
     }),
-  /** Render text as QR PNG (written to OS temp dir, returns path). */
-  qrPng: (args: { text: string; size?: number }) =>
-    invoke<string>("qr_png", { args: { text: args.text, size: args.size ?? null } }),
+  /** Render text as QR PNG/SVG (written to OS temp dir, returns path). */
+  qrPng: (args: { text: string; size?: number; ec?: string; format?: string }) =>
+    invoke<string>("qr_png", { args: { text: args.text, size: args.size ?? null, ec: args.ec ?? null, format: args.format ?? null } }),
   /** SHA-256 hex of a file (streams in Rust, 512 MiB cap). */
   hashFile: (path: string) => invoke<string>("hash_file", { path }),
   presets: () => invoke<PresetInfo[]>("list_presets"),

@@ -78,33 +78,38 @@ pub fn export_svg_file(args: ExportSvgArgs) -> DiagramResult<String> {
     Ok(path.display().to_string())
 }
 
-/// `qr_png` — render text as QR PNG bytes, written to the OS temp dir.
-/// Returns the written path (UI reveals it). Pure-Rust `qrcode` + `image`.
+/// `qr_png` — render text as QR (PNG bytes or SVG text), written to the OS temp dir.
+/// Returns the written path (UI reveals it). Shared `ForgeImageEncoder::encode_qr`
+/// (single source with the CLI); unique filename per generate via content hash.
 #[derive(Debug, Deserialize)]
 pub(crate) struct QrArgs {
     text: String,
     size: Option<u32>,
+    ec: Option<String>,
+    format: Option<String>,
 }
 
 #[tauri::command]
 pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
-    use image::Luma;
-    if args.text.is_empty() {
-        return Err(ForgeError::InvalidConfiguration("qr needs non-empty text".to_string()).into());
-    }
-    if args.text.len() > 2048 {
-        return Err(ForgeError::InvalidConfiguration(
-            "qr text over 2048 bytes (use a URL shortener)".to_string(),
-        )
-        .into());
-    }
+    use forge_image::{ForgeImageEncoder, QrOutput};
     let size = args.size.unwrap_or(256).clamp(128, 1024);
-    let code = qrcode::QrCode::new(args.text.as_bytes())
-        .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
-    let img = code.render::<Luma<u8>>().min_dimensions(size, size).build();
-    let path = std::env::temp_dir().join(format!("forgeconvert-qr-{size}.png"));
-    img.save(&path)
-        .map_err(|e| ForgeError::EncodeFailed(format!("qr png: {e}")))?;
+    let out =
+        ForgeImageEncoder::encode_qr(&args.text, args.ec.as_deref(), args.format.as_deref(), size)
+            .map_err(CommandError::from)?;
+    // Unique temp name: content hash avoids same-tick collisions + repeat overwrites.
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in args.text.bytes() {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let (ext, bytes) = match &out {
+        QrOutput::Png(png) => ("png", png.clone()),
+        QrOutput::Svg(svg) => ("svg", svg.as_bytes().to_vec()),
+    };
+    let path = std::env::temp_dir().join(format!("forgeconvert-qr-{hash:016x}-{size}.{ext}"));
+    StdFileSystem
+        .write_atomic(&path, &bytes)
+        .map_err(CommandError::from)?;
     Ok(path.display().to_string())
 }
 

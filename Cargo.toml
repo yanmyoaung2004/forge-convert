@@ -17,8 +17,8 @@ printpdf = { version = "0.12", default-features = false, features = ["images"] }
 kamadak-exif = "0.6"
 lopdf = { version = "0.44", default-features = false }
 docx-rs = { version = "0.4" }
-# QR PNG for the text/data toolbox (pure-Rust encoder; PNG via `image`).
-qrcode = { version = "0.14", default-features = false, features = ["image"] }
+# QR encode (pure-Rust; PNG via `image`, vector via `svg` string builder — no native deps).
+qrcode = { version = "0.14", default-features = false, features = ["image", "svg"] }
 clap = { version = "4.6", features = ["derive"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"

@@ -18,8 +18,6 @@ forge-engine = { path = "../../../crates/forge-engine" }
 forge-image = { path = "../../../crates/forge-image" }
 forge-pdf = { path = "../../../crates/forge-pdf" }
 forge-store = { path = "../../../crates/forge-store" }
-image.workspace = true
-qrcode.workspace = true
 sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true

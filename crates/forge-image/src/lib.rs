@@ -166,6 +166,72 @@ impl ForgeImageEncoder {
             .map_err(|e| ForgeError::EncodeFailed(format!("ico pack: {e}")))?;
         Ok(out)
     }
+
+    /// QR encode, shared by CLI + desktop (single source; no duplicated limits).
+    /// `ec` is `L|M|Q|H` (default `M` = old behavior); `format` is `png|svg`
+    /// (default `png`). Text cap 2048 bytes, size clamp 128–1024.
+    pub fn encode_qr(
+        text: &str,
+        ec: Option<&str>,
+        format: Option<&str>,
+        size: u32,
+    ) -> Result<QrOutput> {
+        if text.is_empty() {
+            return Err(ForgeError::InvalidConfiguration(
+                "qr needs non-empty text".to_string(),
+            ));
+        }
+        if text.len() > 2048 {
+            return Err(ForgeError::InvalidConfiguration(
+                "qr text over 2048 bytes (use a URL shortener)".to_string(),
+            ));
+        }
+        let level = match ec.unwrap_or("M").to_ascii_uppercase().as_str() {
+            "L" => qrcode::EcLevel::L,
+            "M" => qrcode::EcLevel::M,
+            "Q" => qrcode::EcLevel::Q,
+            "H" => qrcode::EcLevel::H,
+            other => {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "qr ec must be L|M|Q|H, got {other:?}"
+                )));
+            }
+        };
+        let size_px = size.clamp(128, 1024);
+        let code = qrcode::QrCode::with_error_correction_level(text.as_bytes(), level)
+            .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
+        match format.unwrap_or("png").to_ascii_lowercase().as_str() {
+            "svg" => {
+                let svg: String = code.render::<qrcode::render::svg::Color>().build();
+                if !svg.contains("<svg") {
+                    return Err(ForgeError::EncodeFailed("qr svg render empty".to_string()));
+                }
+                Ok(QrOutput::Svg(svg))
+            }
+            "png" => {
+                // Scale modules to the requested size (min_dimensions only
+                // grows when too small; module_dimensions sets an exact floor).
+                let img = code
+                    .render::<image::Luma<u8>>()
+                    .min_dimensions(size_px, size_px)
+                    .build();
+                let mut png: Vec<u8> = Vec::new();
+                img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                    .map_err(|e| ForgeError::EncodeFailed(format!("qr png: {e}")))?;
+                Ok(QrOutput::Png(png))
+            }
+            other => Err(ForgeError::InvalidConfiguration(format!(
+                "qr format must be png|svg, got {other:?}"
+            ))),
+        }
+    }
+}
+
+/// QR encode result: PNG bytes or SVG text (caller picks file extension).
+#[derive(Debug)]
+pub enum QrOutput {
+    Png(Vec<u8>),
+    Svg(String),
 }
 
 impl ImageEncoder for ForgeImageEncoder {
@@ -623,6 +689,45 @@ mod tests {
     fn test_bmp_tiff_roundtrips() {
         roundtrip(ImageFormat::Bmp, 80);
         roundtrip(ImageFormat::Tiff, 80);
+    }
+
+    #[test]
+    fn test_qr_png_magic_and_dims() {
+        for ec in [None, Some("L"), Some("M"), Some("Q"), Some("H")] {
+            let out = ForgeImageEncoder::encode_qr("https://example.com", ec, None, 256).unwrap();
+            let QrOutput::Png(png) = out else {
+                panic!("expected PNG");
+            };
+            // PNG magic: 89 50 4E 47.
+            assert_eq!(&png[0..4], &[0x89, 0x50, 0x4E, 0x47]);
+            let img = image::load_from_memory(&png).unwrap();
+            assert!(img.width() >= 128 && img.height() >= 128);
+        }
+    }
+
+    #[test]
+    fn test_qr_svg_starts_with_svg() {
+        let out = ForgeImageEncoder::encode_qr("hello", Some("M"), Some("svg"), 256).unwrap();
+        let QrOutput::Svg(svg) = out else {
+            panic!("expected SVG");
+        };
+        assert!(svg.contains("<svg"));
+    }
+
+    #[test]
+    fn test_qr_rejects_bad_ec_format_and_empty() {
+        assert!(matches!(
+            ForgeImageEncoder::encode_qr("x", Some("Z"), None, 256),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
+        assert!(matches!(
+            ForgeImageEncoder::encode_qr("x", None, Some("bmp"), 256),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
+        assert!(matches!(
+            ForgeImageEncoder::encode_qr("", None, None, 256),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
     }
 
     #[test]

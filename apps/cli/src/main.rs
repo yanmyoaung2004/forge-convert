@@ -14,7 +14,7 @@ use forge_core::{
     MetadataPolicy, NeverCancel, OutputTarget, PdfRenderer as _, PdfWriteSpec, PdfWriter as _,
 };
 use forge_engine::{BatchConfig, CancelFlag, EngineDeps, NullSink, Orchestrator, StdFileSystem};
-use forge_image::{ForgeImageDecoder, ForgeImageEncoder, ResizeStep};
+use forge_image::{ForgeImageDecoder, ForgeImageEncoder, QrOutput, ResizeStep};
 use forge_pdf::{ForgePdfWriter, StubPdfRenderer};
 
 #[derive(Debug, Parser)]
@@ -246,16 +246,22 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    /// Render text as QR PNG (pure-Rust `qrcode` + `image`).
+    /// Render text as QR (PNG or SVG, pure-Rust `qrcode` + `image`).
     Qr {
         /// Text to encode (max 2048 bytes).
         text: String,
-        /// Output PNG file (default: `qr.png` in cwd).
+        /// Output file (default: `qr.png` in cwd; `.svg` when `--format svg` and no output given).
         #[arg(long)]
         output: Option<PathBuf>,
-        /// Longest side in px, 128–1024 (default 256).
+        /// Longest side in px, 128–1024 (default 256; PNG only).
         #[arg(long, default_value_t = 256)]
         size: u32,
+        /// Error correction: L (7%) | M (15%) | Q (25%) | H (30%). Default M.
+        #[arg(long, default_value_t = String::from("M"))]
+        ec: String,
+        /// Output format: png | svg. Default png.
+        #[arg(long, default_value_t = String::from("png"))]
+        format: String,
         /// Existing-output behavior.
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
@@ -1049,36 +1055,23 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             text,
             output,
             size,
+            ec,
+            format,
             on_collision,
         } => {
-            if text.is_empty() {
-                return Err(ForgeError::InvalidConfiguration(
-                    "qr needs non-empty text".to_string(),
-                ));
-            }
-            if text.len() > 2048 {
-                return Err(ForgeError::InvalidConfiguration(
-                    "qr text over 2048 bytes (use a URL shortener)".to_string(),
-                ));
-            }
-            let size = size.clamp(128, 1024);
-            let code = qrcode::QrCode::new(text.as_bytes())
-                .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
-            let img = code
-                .render::<image::Luma<u8>>()
-                .min_dimensions(size, size)
-                .build();
-            let candidate = output.unwrap_or_else(|| PathBuf::from("qr.png"));
+            let out = ForgeImageEncoder::encode_qr(&text, Some(&ec), Some(&format), size)?;
+            let (default_name, bytes) = match &out {
+                QrOutput::Png(png) => ("qr.png", png.clone()),
+                QrOutput::Svg(svg) => ("qr.svg", svg.as_bytes().to_vec()),
+            };
+            let candidate = output.unwrap_or_else(|| PathBuf::from(default_name));
             let target = resolve_explicit_output(&candidate, on_collision.to_policy())?;
             let Some(target) = target else {
                 println!("{}", candidate.display());
                 eprintln!("skipped (exists): {}", candidate.display());
                 return Ok(());
             };
-            let mut png: Vec<u8> = Vec::new();
-            img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-                .map_err(|e| ForgeError::EncodeFailed(format!("qr png: {e}")))?;
-            StdFileSystem.write_atomic(&target, &png)?;
+            StdFileSystem.write_atomic(&target, &bytes)?;
             println!("{}", target.display());
             Ok(())
         }
