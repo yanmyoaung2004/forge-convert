@@ -58,19 +58,20 @@ pnpm --dir dev/apps/desktop exec vite build
 pnpm --dir dev/apps/desktop exec tauri dev
 ```
 
-## [Download — v0.3.0](https://github.com/yanmyoaung2004/forge-convert/releases/tag/v0.3.0)
+## [Download — v0.4.0](https://github.com/yanmyoaung2004/forge-convert/releases/tag/v0.4.0)
 
 | Asset | What | How to run |
 |---|---|---|
-| [forgeconvert-windows-x86_64.exe](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.3.0/forgeconvert-windows-x86_64.exe) | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
-| [forgeconvert-linux-x86_64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.3.0/forgeconvert-linux-x86_64) | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
-| [forgeconvert-macos-aarch64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.3.0/forgeconvert-macos-aarch64) | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
-| `ForgeConvert_0.3.0_x64_en-US.msi` | Desktop installer (SVG Diagram included) | Double-click (per-machine install) |
-| `ForgeConvert_0.3.0_x64-setup.exe` | Desktop installer (SVG Diagram included) | Double-click (NSIS wizard) |
+| [forgeconvert-windows-x86_64.exe](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.4.0/forgeconvert-windows-x86_64.exe) | CLI, Windows x64 | `forgeconvert-windows-x86_64.exe --help` |
+| [forgeconvert-linux-x86_64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.4.0/forgeconvert-linux-x86_64) | CLI, Linux x64 | `chmod +x forgeconvert-linux-x86_64 && ./forgeconvert-linux-x86_64 --help` |
+| [forgeconvert-macos-aarch64](https://github.com/yanmyoaung2004/forge-convert/releases/download/v0.4.0/forgeconvert-macos-aarch64) | CLI, macOS Apple Silicon | `chmod +x forgeconvert-macos-aarch64 && ./forgeconvert-macos-aarch64 --help` |
+| `ForgeConvert_0.4.0_x64_en-US.msi` | Desktop installer (PDF toolkit + favicon + toolbox) | Double-click (per-machine install) |
+| `ForgeConvert_0.4.0_x64-setup.exe` | Desktop installer (PDF toolkit + favicon + toolbox) | Double-click (NSIS wizard) |
+
+> v0.4.0: PDF merge (`pdf-merge a.pdf b.pdf`) + PDF compress (`pdf-compress --level light|balanced`) + **favicon generator** (`favicon in.png`, ICO 16/32/48 + PNGs + link snippet) + **text/data toolbox** (JSON/base64/UUID/timestamps/JWT-decode/regex + QR PNG + SHA-256 file hash). Desktop gains PDF merge/compress rows, Favicon section, and Tools tab.
 
 > v0.3.0: PDF split (`pdf-split --pages 2-5`) + PDF → Word (`pdf-to-docx`, Unicode-safe, position-faithful) + **SVG Diagram editor** (27 blocks incl. UML/ERD, connections, undo/redo, auto-layout, templates, save/load, bidirectional SVG import/export). Desktop gains Diagram tab with pan/select tools, responsive layout, realistic icons.
 
-Cutting the next release (maintainers): `git tag v0.4.0 && git push origin v0.4.0` — CI rebuilds everything above automatically.
 ## Architecture
 
 Clean layered + hexagonal (ports & adapters), dependencies point inward:
