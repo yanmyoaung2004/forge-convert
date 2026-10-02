@@ -108,3 +108,71 @@ export function regexTest(pattern: string, flags: string, text: string): { hits:
   }
   return { hits, error: null };
 }
+
+/** QR payload kinds (builders fill the QR text box; encode path unchanged). */
+export type QrPayloadKind = "raw" | "url" | "wifi" | "mailto" | "sms" | "vcard";
+
+/** Escape `; , : \` for WiFi payload fields (spec escaping). */
+function wifiEscape(raw: string): string {
+  return raw.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/:/g, "\\:");
+}
+
+/** Fold a vCard line at 75 octets (CRLF + space continuation). ASCII-only inputs here. */
+function foldVcard(line: string): string {
+  if (line.length <= 75) return line;
+  let out = line.slice(0, 75);
+  let rest = line.slice(75);
+  while (rest.length > 0) {
+    out += "\r\n " + rest.slice(0, 74);
+    rest = rest.slice(74);
+  }
+  return out;
+}
+
+/** Build a WiFi QR payload (`WIFI:T:..;S:..;P:..;H:..;;`). Throws on bad input. */
+export function qrWifi(security: string, ssid: string, password: string, hidden: boolean): string {
+  const sec = security.trim().toUpperCase();
+  if (sec !== "WPA" && sec !== "WEP" && sec !== "NOPASS") throw new Error("WiFi security must be WPA|WEP|nopass");
+  if (!ssid) throw new Error("WiFi SSID required");
+  if (sec === "NOPASS") return `WIFI:T:nopass;S:${wifiEscape(ssid)};${hidden ? "H:true;" : ""};`;
+  if (!password) throw new Error("WiFi password required for WPA/WEP");
+  return `WIFI:T:${sec};S:${wifiEscape(ssid)};P:${wifiEscape(password)};${hidden ? "H:true;" : ""};`;
+}
+
+/** Build a URL QR payload (requires http/https scheme). */
+export function qrUrl(raw: string): string {
+  const url = raw.trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error("URL must start with http:// or https://");
+  return url;
+}
+
+/** Build a `mailto:` QR payload (minimal address check). */
+export function qrMailto(to: string, subject: string, body: string): string {
+  const addr = to.trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr)) throw new Error("bad email address");
+  const params = new URLSearchParams();
+  if (subject) params.set("subject", subject);
+  if (body) params.set("body", body);
+  const q = params.toString();
+  return `mailto:${addr}${q ? "?" + q : ""}`;
+}
+
+/** Build an `sms:` QR payload (digits/`+` only, message optional). */
+export function qrSms(number: string, message: string): string {
+  const num = number.trim();
+  if (!/^\+?\d+$/.test(num)) throw new Error("SMS number must be digits with optional leading +");
+  return message ? `sms:${num}?body=${encodeURIComponent(message)}` : `sms:${num}`;
+}
+
+/** Build a minimal vCard 3.0 QR payload (FN required; CRLF folded). */
+export function qrVcard(name: string, phone: string, email: string): string {
+  if (!name.trim()) throw new Error("vCard name required");
+  const lines = ["BEGIN:VCARD", "VERSION:3.0", foldVcard(`FN:${name.trim()}`)];
+  if (phone.trim()) lines.push(foldVcard(`TEL:${phone.trim()}`));
+  if (email.trim()) {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) throw new Error("bad vCard email");
+    lines.push(foldVcard(`EMAIL:${email.trim()}`));
+  }
+  lines.push("END:VCARD");
+  return lines.join("\r\n");
+}

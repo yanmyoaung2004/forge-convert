@@ -3,7 +3,8 @@ All local-first; QR + file hash go through thin Rust commands. -->
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
-import { b64decode, b64encode, epochToIso, isoToEpoch, jsonError, jsonMinify, jsonPretty, jwtDecode, newUuid, regexTest } from "./texttools";
+import { b64decode, b64encode, epochToIso, isoToEpoch, jsonError, jsonMinify, jsonPretty, jwtDecode, newUuid, qrMailto, qrSms, qrUrl, qrVcard, qrWifi, regexTest } from "./texttools";
+import type { QrPayloadKind } from "./texttools";
 import { api, isCommandError } from "../api";
 
 const jsonIn = ref('{"hello":"world"}');
@@ -30,6 +31,20 @@ const qrEc = ref("M");
 const qrFormat = ref<"png" | "svg">("png");
 const qrMsg = ref<string | null>(null);
 const qrDecoded = ref<string | null>(null);
+const qrKind = ref<QrPayloadKind>("raw");
+const qrBuildMsg = ref<string | null>(null);
+const wifiSsid = ref("");
+const wifiPass = ref("");
+const wifiSec = ref("WPA");
+const wifiHidden = ref(false);
+const mailTo = ref("");
+const mailSubj = ref("");
+const mailBody = ref("");
+const smsNum = ref("");
+const smsMsg = ref("");
+const vcName = ref("");
+const vcPhone = ref("");
+const vcEmail = ref("");
 const hashPath = ref<string | null>(null);
 const hashOut = ref<string | null>(null);
 const toolError = ref<string | null>(null);
@@ -93,6 +108,46 @@ async function doQr(): Promise<void> {
     toolError.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
   }
 }
+function fillWifi(): void {
+  qrBuildMsg.value = null;
+  try {
+    qrText.value = qrWifi(wifiSec.value, wifiSsid.value, wifiPass.value, wifiHidden.value);
+  } catch (e) {
+    qrBuildMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+function fillUrl(): void {
+  qrBuildMsg.value = null;
+  try {
+    qrText.value = qrUrl(qrText.value);
+  } catch (e) {
+    qrBuildMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+function fillMailto(): void {
+  qrBuildMsg.value = null;
+  try {
+    qrText.value = qrMailto(mailTo.value, mailSubj.value, mailBody.value);
+  } catch (e) {
+    qrBuildMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+function fillSms(): void {
+  qrBuildMsg.value = null;
+  try {
+    qrText.value = qrSms(smsNum.value, smsMsg.value);
+  } catch (e) {
+    qrBuildMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+function fillVcard(): void {
+  qrBuildMsg.value = null;
+  try {
+    qrText.value = qrVcard(vcName.value, vcPhone.value, vcEmail.value);
+  } catch (e) {
+    qrBuildMsg.value = e instanceof Error ? e.message : String(e);
+  }
+}
 async function doQrDecode(): Promise<void> {
   qrDecoded.value = null;
   toolError.value = null;
@@ -114,6 +169,7 @@ async function pickHashFile(): Promise<void> {
   }
 }
 async function doHash(): Promise<void> {
+  toolError.value = null;
   if (!hashPath.value) return;
   try {
     hashOut.value = await api.hashFile(hashPath.value);
@@ -178,7 +234,49 @@ async function doHash(): Promise<void> {
       </div>
       <div class="panel card">
         <h3>QR → PNG/SVG</h3>
-        <textarea v-model="qrText" rows="2" spellcheck="false" aria-label="QR text" />
+        <div class="row" role="tablist" aria-label="Payload type">
+          <button class="btn ghost sm" :class="{ on: qrKind === 'raw' }" @click="qrKind = 'raw'">Text</button>
+          <button class="btn ghost sm" :class="{ on: qrKind === 'url' }" @click="qrKind = 'url'">URL</button>
+          <button class="btn ghost sm" :class="{ on: qrKind === 'wifi' }" @click="qrKind = 'wifi'">WiFi</button>
+          <button class="btn ghost sm" :class="{ on: qrKind === 'mailto' }" @click="qrKind = 'mailto'">Email</button>
+          <button class="btn ghost sm" :class="{ on: qrKind === 'sms' }" @click="qrKind = 'sms'">SMS</button>
+          <button class="btn ghost sm" :class="{ on: qrKind === 'vcard' }" @click="qrKind = 'vcard'">vCard</button>
+        </div>
+        <div v-if="qrKind === 'raw' || qrKind === 'url'" class="row">
+          <textarea v-model="qrText" rows="2" spellcheck="false" aria-label="QR text" :placeholder="qrKind === 'url' ? 'https://example.com' : 'Any text'" />
+          <button v-if="qrKind === 'url'" class="btn ghost sm" @click="fillUrl">Validate</button>
+        </div>
+        <div v-if="qrKind === 'wifi'" class="row">
+          <label>SSID <input v-model="wifiSsid" type="text" spellcheck="false" /></label>
+          <label>Password <input v-model="wifiPass" type="text" spellcheck="false" /></label>
+          <label>Security
+            <select v-model="wifiSec" aria-label="WiFi security">
+              <option value="WPA">WPA</option>
+              <option value="WEP">WEP</option>
+              <option value="nopass">nopass</option>
+            </select>
+          </label>
+          <label><input v-model="wifiHidden" type="checkbox" /> Hidden</label>
+          <button class="btn ghost sm" @click="fillWifi">Fill</button>
+        </div>
+        <div v-if="qrKind === 'mailto'" class="row">
+          <label>To <input v-model="mailTo" type="text" spellcheck="false" /></label>
+          <label>Subject <input v-model="mailSubj" type="text" /></label>
+          <label>Body <input v-model="mailBody" type="text" /></label>
+          <button class="btn ghost sm" @click="fillMailto">Fill</button>
+        </div>
+        <div v-if="qrKind === 'sms'" class="row">
+          <label>Number <input v-model="smsNum" type="text" inputmode="tel" /></label>
+          <label>Message <input v-model="smsMsg" type="text" /></label>
+          <button class="btn ghost sm" @click="fillSms">Fill</button>
+        </div>
+        <div v-if="qrKind === 'vcard'" class="row">
+          <label>Name <input v-model="vcName" type="text" /></label>
+          <label>Phone <input v-model="vcPhone" type="text" inputmode="tel" /></label>
+          <label>Email <input v-model="vcEmail" type="text" inputmode="email" /></label>
+          <button class="btn ghost sm" @click="fillVcard">Fill</button>
+        </div>
+        <p v-if="qrBuildMsg" class="error">{{ qrBuildMsg }}</p>
         <div class="row">
           <label>Size <input v-model.number="qrSize" type="number" min="128" max="1024" /></label>
           <label>EC
