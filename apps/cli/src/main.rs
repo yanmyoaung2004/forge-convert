@@ -266,6 +266,26 @@ enum Command {
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
     },
+    /// Render one QR per line of a text file (one payload per line, `#` comments + blanks skipped).
+    QrBatch {
+        /// List file (UTF-8; CRLF + BOM tolerated).
+        list: PathBuf,
+        /// Output directory (default: `qr-batch` in cwd).
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// Longest side in px, 128–1024 (default 256; PNG only).
+        #[arg(long, default_value_t = 256)]
+        size: u32,
+        /// Error correction: L (7%) | M (15%) | Q (25%) | H (30%). Default M.
+        #[arg(long, default_value_t = String::from("M"))]
+        ec: String,
+        /// Output format: png | svg. Default png.
+        #[arg(long, default_value_t = String::from("png"))]
+        format: String,
+        /// Existing-output behavior.
+        #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
+        on_collision: CliCollision,
+    },
     /// SHA-256 hex of a file (streamed; 512 MiB cap).
     Hash {
         /// Input file.
@@ -1078,6 +1098,14 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             };
             StdFileSystem.write_atomic(&target, &bytes)?;
             println!("{}", target.display());
+            record_history(
+                "qr",
+                &PathBuf::from(&text.chars().take(32).collect::<String>()),
+                &target,
+                ImageFormat::Png,
+                &ConversionOptions::default(),
+                0,
+            );
             Ok(())
         }
         Command::Hash { input } => {
@@ -1094,12 +1122,106 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let bytes = StdFileSystem.read(&input)?;
             let text = ForgeImageEncoder::decode_qr(&bytes)?;
             println!("{text}");
+            record_history(
+                "qr-decode",
+                &input,
+                &input,
+                ImageFormat::Png,
+                &ConversionOptions::default(),
+                0,
+            );
+            Ok(())
+        }
+        Command::QrBatch {
+            list,
+            out_dir,
+            size,
+            ec,
+            format,
+            on_collision,
+        } => {
+            // UTF-8 list, one payload per line; `#` comments + blanks skipped.
+            // CRLF tolerated (trim), BOM stripped (Windows-authored lists).
+            let raw = StdFileSystem.read(&list)?;
+            let text = String::from_utf8(raw)
+                .map_err(|e| ForgeError::InvalidFile(format!("qr-batch list not UTF-8: {e}")))?;
+            let text = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+            let payloads: Vec<&str> = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect();
+            if payloads.is_empty() {
+                return Err(ForgeError::InvalidConfiguration(
+                    "qr-batch list has no payloads".to_string(),
+                ));
+            }
+            let dir = out_dir.unwrap_or_else(|| PathBuf::from("qr-batch"));
+            let policy = on_collision.to_policy();
+            let ext = match format.to_ascii_lowercase().as_str() {
+                "svg" => "svg",
+                "png" => "png",
+                other => {
+                    return Err(ForgeError::InvalidConfiguration(format!(
+                        "qr format must be png|svg, got {other:?}"
+                    )));
+                }
+            };
+            let mut ok = 0usize;
+            let mut failed = 0usize;
+            let mut skipped = 0usize;
+            for (i, payload) in payloads.iter().enumerate() {
+                match ForgeImageEncoder::encode_qr(payload, Some(&ec), Some(&format), size) {
+                    Ok(out) => {
+                        let bytes = match &out {
+                            QrOutput::Png(png) => png.clone(),
+                            QrOutput::Svg(svg) => svg.as_bytes().to_vec(),
+                        };
+                        let candidate = dir.join(format!("qr-{:03}.{ext}", i + 1));
+                        match resolve_explicit_output(&candidate, policy)? {
+                            Some(t) => {
+                                StdFileSystem.write_atomic(&t, &bytes)?;
+                                println!("{}", t.display());
+                                ok += 1;
+                            }
+                            None => {
+                                println!("{}", candidate.display());
+                                eprintln!("skipped (exists): {}", candidate.display());
+                                skipped += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("line {}: {e}", i + 1);
+                        failed += 1;
+                    }
+                }
+            }
+            eprintln!("{ok} ok / {failed} failed / {skipped} skipped");
+            if ok == 0 && skipped == 0 && failed > 0 {
+                return Err(ForgeError::InvalidFile(
+                    "qr-batch: all payloads failed".to_string(),
+                ));
+            }
+            if let Some(first) = std::fs::read_dir(&dir)
+                .ok()
+                .and_then(|mut d| d.next())
+                .and_then(|e| e.ok())
+            {
+                record_history(
+                    "qr-batch",
+                    &list,
+                    &first.path(),
+                    ImageFormat::Png,
+                    &ConversionOptions::default(),
+                    0,
+                );
+            }
             Ok(())
         }
     }
 }
 
-/// Default history DB path: OS data dir or `.forgeconvert/history.db` fallback.
 fn history_db_path() -> PathBuf {
     if let Some(dir) = dirs_data_dir() {
         return dir.join("forgeconvert").join("history.db");
