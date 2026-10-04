@@ -187,3 +187,45 @@ export function toSvg(doc: DiagramDoc): string {
     `${conns}${shapes}${texts}</svg>`
   );
 }
+
+/**
+ * Rasterize an SVG string to a PNG blob via Image + canvas (DOM-only).
+ * Parses width/height from the viewBox (fallback 800×600); `scale` 1|2.
+ * Rejects empty SVG or canvas failure with an Error (caller surfaces it).
+ */
+export function svgToPngBlob(svg: string, scale: number): Promise<Blob> {
+  if (!svg.includes("<svg")) return Promise.reject(new Error("empty SVG"));
+  const s = scale === 2 ? 2 : 1;
+  const m = svg.match(/viewBox="([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)\s+([\d.\-]+)"/);
+  const w = m ? Math.max(1, Math.round(Number(m[3]))) : 800;
+  const h = m ? Math.max(1, Math.round(Number(m[4]))) : 600;
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  const img = new Image();
+  const loaded = new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("SVG image load failed"));
+  });
+  const rasterized = loaded.then(
+    () =>
+      new Promise<Blob>((resolve, reject) => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = w * s;
+          canvas.height = h * s;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("canvas 2d unavailable");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error("PNG rasterize failed"));
+          }, "image/png");
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      }),
+  );
+  img.src = url;
+  return rasterized.finally(() => URL.revokeObjectURL(url));
+}

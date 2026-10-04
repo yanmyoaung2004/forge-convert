@@ -4,7 +4,7 @@ as editable blocks (svgToDoc); canvas edits re-render here. -->
 import { ref, watch } from "vue";
 
 const props = defineProps<{ svg: string }>();
-const emit = defineEmits<{ copy: []; download: []; importSvg: [text: string] }>();
+const emit = defineEmits<{ copy: []; download: []; downloadPng: [scale: number]; importSvg: [text: string] }>();
 const copied = ref(false);
 const draft = ref(props.svg);
 const dirty = ref(false);
@@ -41,6 +41,8 @@ function onImport(): void {
       <button class="btn ghost sm" @click="draft = svg; dirty = false" title="Discard edits, show current canvas SVG">Revert</button>
       <button class="btn ghost sm" @click="onCopy" :title="copied ? 'Copied!' : 'Copy SVG source'">{{ copied ? "✓ Copied" : "Copy" }}</button>
       <button class="btn ghost sm primary" @click="emit('download')" title="Save the diagram as a .svg file">Export SVG</button>
+      <button class="btn ghost sm" @click="emit('downloadPng', 1)" title="Rasterize the diagram to PNG (1x)">Export PNG</button>
+      <button class="btn ghost sm" @click="emit('downloadPng', 2)" title="Rasterize the diagram to PNG at 2x">Export PNG 2x</button>
     </div>
     <textarea
       class="src"

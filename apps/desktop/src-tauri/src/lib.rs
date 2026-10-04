@@ -29,6 +29,7 @@ pub fn run() {
             diagram::save_diagram,
             diagram::load_diagram,
             diagram::export_svg_file,
+            diagram::export_png_file,
             diagram::qr_png,
             diagram::qr_decode,
             diagram::hash_file,

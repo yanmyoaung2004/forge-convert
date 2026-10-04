@@ -11,7 +11,7 @@ import { blankDoc, newId, validateDoc, type DiagramConnection, type DiagramDoc, 
 import { createElement, ELEMENTS } from "./elements";
 import { History } from "./history";
 import { layoutHierarchy, layoutHorizontal, layoutVertical } from "./layout";
-import { toSvg } from "./serialize";
+import { svgToPngBlob, toSvg } from "./serialize";
 import { TEMPLATES } from "./templates";
 import { isCommandError } from "../api";
 import { svgToDoc } from "./importSvg";
@@ -342,6 +342,22 @@ async function downloadSvg(): Promise<void> {
   }
 }
 
+/** Rasterize the SVG to PNG via canvas (DOM-only; 1x/2x), save through Rust. */
+async function downloadPng(scale: number): Promise<void> {
+  error.value = null;
+  try {
+    const s = scale === 2 ? 2 : 1;
+    const blob = await svgToPngBlob(svgText.value, s);
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let bin = "";
+    for (const b of buf) bin += String.fromCharCode(b);
+    const path = await save({ defaultPath: `${doc.value.metadata.name}.png`, filters: [{ name: "PNG", extensions: ["png"] }] });
+    if (!path) return;
+    await invoke<string>("export_png_file", { args: { path, png_base64: btoa(bin) } });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
 /** Paste/import path: SVG text → editable blocks (undoable, errors shown). */
 function importFromSvg(text: string): void {
   error.value = null;
@@ -353,7 +369,6 @@ function importFromSvg(text: string): void {
   doc.value = result.doc;
   selection.value = [];
   selConn.value = null;
-  history.reset(result.doc);
   syncHistFlags();
   commit();
   if (result.notes.length > 1) error.value = result.notes.slice(1).join(" ");
@@ -555,7 +570,7 @@ onUnmounted(() => {
       />
       <PropsPanel :element="selectedEl" :connection="selectedConn" @patch-el="onPatchEl" @patch-conn="onPatchConn" />
     </div>
-    <CodeViewer :svg="svgText" @copy="copySvg" @download="downloadSvg" @import-svg="importFromSvg" />
+    <CodeViewer :svg="svgText" @copy="copySvg" @download="downloadSvg" @download-png="downloadPng" @import-svg="importFromSvg" />
   </section>
 </template>
 
@@ -568,7 +583,6 @@ onUnmounted(() => {
 }
 .btn.sm { padding: 0.35rem 0.65rem; font-size: 0.82rem; }
 .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-.btn.ghost.on { background: var(--ink); color: white; }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .sep { width: 1px; height: 1.4rem; background: var(--line); }
 .zoom { min-width: 3rem; text-align: center; font-variant-numeric: tabular-nums; }

@@ -78,6 +78,72 @@ pub fn export_svg_file(args: ExportSvgArgs) -> DiagramResult<String> {
     Ok(path.display().to_string())
 }
 
+/// `export_png_file` — write canvas-rasterized PNG bytes (base64 from TS) atomically.
+/// Same thin-bytes pattern as `export_svg_file`; PNG validation is magic-byte check.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportPngArgs {
+    path: String,
+    png_base64: String,
+}
+
+#[tauri::command]
+pub fn export_png_file(args: ExportPngArgs) -> DiagramResult<String> {
+    // Minimal base64 decode without a new dep (canvas PNGs are small).
+    let bytes = decode_base64(args.png_base64.as_bytes())
+        .map_err(|e| ForgeError::InvalidConfiguration(format!("bad png base64: {e}")))?;
+    if bytes.len() < 8 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err(ForgeError::InvalidConfiguration(
+            "refusing to write non-PNG content with .png path".to_string(),
+        )
+        .into());
+    }
+    let path = PathBuf::from(&args.path);
+    StdFileSystem
+        .write_atomic(&path, &bytes)
+        .map_err(CommandError::from)?;
+    Ok(path.display().to_string())
+}
+
+/// Tiny base64 decoder (standard alphabet, `=` padding tolerated, whitespace ignored).
+fn decode_base64(input: &[u8]) -> std::result::Result<Vec<u8>, String> {
+    const TABLE: &[u8; 128] = &{
+        let mut t = [255u8; 128];
+        let mut i = 0u8;
+        while i < 26 {
+            t[(b'A' + i) as usize] = i;
+            t[(b'a' + i) as usize] = 26 + i;
+            i += 1;
+        }
+        let mut j = 0u8;
+        while j < 10 {
+            t[(b'0' + j) as usize] = 52 + j;
+            j += 1;
+        }
+        t[b'+' as usize] = 62;
+        t[b'/' as usize] = 63;
+        t
+    };
+    let mut buf: u32 = 0;
+    let mut bits = 0u8;
+    let mut out = Vec::new();
+    for byte in input.iter().copied() {
+        if byte == b'=' || byte == b'\n' || byte == b'\r' || byte == b' ' || byte == b'\t' {
+            continue;
+        }
+        if byte >= 128 || TABLE[byte as usize] == 255 {
+            return Err(format!("bad char {byte:#x}"));
+        }
+        buf = (buf << 6) | u32::from(TABLE[byte as usize]);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
+}
+
 /// `qr_png` — render text as QR (PNG bytes or SVG text), written to the OS temp dir.
 /// Returns the written path (UI reveals it). Shared `ForgeImageEncoder::encode_qr`
 /// (single source with the CLI); unique filename per generate via content hash.
