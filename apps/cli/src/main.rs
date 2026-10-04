@@ -262,6 +262,9 @@ enum Command {
         /// Output format: png | svg. Default png.
         #[arg(long, default_value_t = String::from("png"))]
         format: String,
+        /// Drop the white quiet-zone border (default: keep it).
+        #[arg(long, default_value_t = false)]
+        no_quiet_zone: bool,
         /// Existing-output behavior.
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
@@ -271,9 +274,7 @@ enum Command {
         /// List file (UTF-8; CRLF + BOM tolerated).
         list: PathBuf,
         /// Output directory (default: `qr-batch` in cwd).
-        #[arg(long)]
         out_dir: Option<PathBuf>,
-        /// Longest side in px, 128–1024 (default 256; PNG only).
         #[arg(long, default_value_t = 256)]
         size: u32,
         /// Error correction: L (7%) | M (15%) | Q (25%) | H (30%). Default M.
@@ -282,6 +283,9 @@ enum Command {
         /// Output format: png | svg. Default png.
         #[arg(long, default_value_t = String::from("png"))]
         format: String,
+        /// Drop the white quiet-zone border (default: keep it).
+        #[arg(long, default_value_t = false)]
+        no_quiet_zone: bool,
         /// Existing-output behavior.
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
@@ -1082,9 +1086,11 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             size,
             ec,
             format,
+            no_quiet_zone,
             on_collision,
         } => {
-            let out = ForgeImageEncoder::encode_qr(&text, Some(&ec), Some(&format), size)?;
+            let quiet = !no_quiet_zone;
+            let out = ForgeImageEncoder::encode_qr(&text, Some(&ec), Some(&format), size, quiet)?;
             let (default_name, bytes) = match &out {
                 QrOutput::Png(png) => ("qr.png", png.clone()),
                 QrOutput::Svg(svg) => ("qr.svg", svg.as_bytes().to_vec()),
@@ -1138,9 +1144,9 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             size,
             ec,
             format,
+            no_quiet_zone,
             on_collision,
         } => {
-            // UTF-8 list, one payload per line; `#` comments + blanks skipped.
             // CRLF tolerated (trim), BOM stripped (Windows-authored lists).
             let raw = StdFileSystem.read(&list)?;
             let text = String::from_utf8(raw)
@@ -1171,7 +1177,8 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let mut failed = 0usize;
             let mut skipped = 0usize;
             for (i, payload) in payloads.iter().enumerate() {
-                match ForgeImageEncoder::encode_qr(payload, Some(&ec), Some(&format), size) {
+                let quiet = !no_quiet_zone;
+                match ForgeImageEncoder::encode_qr(payload, Some(&ec), Some(&format), size, quiet) {
                     Ok(out) => {
                         let bytes = match &out {
                             QrOutput::Png(png) => png.clone(),

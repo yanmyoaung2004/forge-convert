@@ -5,7 +5,7 @@ import { computed, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { b64decode, b64encode, epochToIso, isoToEpoch, jsonError, jsonMinify, jsonPretty, jwtDecode, newUuid, qrMailto, qrSms, qrUrl, qrVcard, qrWifi, regexTest } from "./texttools";
 import type { QrPayloadKind } from "./texttools";
-import { api, isCommandError } from "../api";
+import { api, isCommandError, revealInFolder } from "../api";
 
 const jsonIn = ref('{"hello":"world"}');
 const jsonOut = ref("");
@@ -29,7 +29,9 @@ const qrText = ref("https://example.com");
 const qrSize = ref(256);
 const qrEc = ref("M");
 const qrFormat = ref<"png" | "svg">("png");
+const qrQuiet = ref(true);
 const qrMsg = ref<string | null>(null);
+const qrPath = ref<string | null>(null);
 const qrDecoded = ref<string | null>(null);
 const qrKind = ref<QrPayloadKind>("raw");
 const qrBuildMsg = ref<string | null>(null);
@@ -100,16 +102,25 @@ function doJwt(): void {
 }
 async function doQr(): Promise<void> {
   qrMsg.value = null;
+  qrPath.value = null;
   toolError.value = null;
   try {
-    const path = await api.qrPng({ text: qrText.value, size: qrSize.value, ec: qrEc.value, format: qrFormat.value });
+    const path = await api.qrPng({ text: qrText.value, size: qrSize.value, ec: qrEc.value, format: qrFormat.value, quiet: qrQuiet.value });
+    qrPath.value = path;
     qrMsg.value = `Wrote ${path}`;
   } catch (err) {
     toolError.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
   }
 }
+async function revealQr(): Promise<void> {
+  if (!qrPath.value) return;
+  try {
+    await revealInFolder(qrPath.value);
+  } catch (err) {
+    toolError.value = err instanceof Error ? err.message : String(err);
+  }
+}
 function fillWifi(): void {
-  qrBuildMsg.value = null;
   try {
     qrText.value = qrWifi(wifiSec.value, wifiSsid.value, wifiPass.value, wifiHidden.value);
   } catch (e) {
@@ -289,10 +300,12 @@ async function doHash(): Promise<void> {
           </label>
           <button class="btn ghost sm" :class="{ on: qrFormat === 'png' }" @click="qrFormat = 'png'">PNG</button>
           <button class="btn ghost sm" :class="{ on: qrFormat === 'svg' }" @click="qrFormat = 'svg'">SVG</button>
+          <label title="White border around the code (scanners expect it)"><input v-model="qrQuiet" type="checkbox" /> Quiet zone</label>
           <button class="btn ghost sm" @click="doQr">Generate</button>
         </div>
         <p v-if="qrMsg" class="dim">{{ qrMsg }}</p>
         <div class="row">
+          <button v-if="qrPath" class="btn ghost sm" @click="revealQr">Reveal file</button>
           <button class="btn ghost sm" @click="doQrDecode">Decode image…</button>
         </div>
         <code v-if="qrDecoded">{{ qrDecoded }}</code>

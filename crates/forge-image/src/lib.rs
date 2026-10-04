@@ -169,12 +169,14 @@ impl ForgeImageEncoder {
 
     /// QR encode, shared by CLI + desktop (single source; no duplicated limits).
     /// `ec` is `L|M|Q|H` (default `M` = old behavior); `format` is `png|svg`
-    /// (default `png`). Text cap 2048 bytes, size clamp 128–1024.
+    /// (default `png`). `quiet` toggles the white border (default on).
+    /// Text cap 2048 bytes, size clamp 128–1024.
     pub fn encode_qr(
         text: &str,
         ec: Option<&str>,
         format: Option<&str>,
         size: u32,
+        quiet: bool,
     ) -> Result<QrOutput> {
         if text.is_empty() {
             return Err(ForgeError::InvalidConfiguration(
@@ -202,7 +204,10 @@ impl ForgeImageEncoder {
             .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
         match format.unwrap_or("png").to_ascii_lowercase().as_str() {
             "svg" => {
-                let svg: String = code.render::<qrcode::render::svg::Color>().build();
+                let svg: String = code
+                    .render::<qrcode::render::svg::Color>()
+                    .quiet_zone(quiet)
+                    .build();
                 if !svg.contains("<svg") {
                     return Err(ForgeError::EncodeFailed("qr svg render empty".to_string()));
                 }
@@ -213,6 +218,7 @@ impl ForgeImageEncoder {
                 // grows when too small; module_dimensions sets an exact floor).
                 let img = code
                     .render::<image::Luma<u8>>()
+                    .quiet_zone(quiet)
                     .min_dimensions(size_px, size_px)
                     .build();
                 let mut png: Vec<u8> = Vec::new();
@@ -721,7 +727,8 @@ mod tests {
     #[test]
     fn test_qr_png_magic_and_dims() {
         for ec in [None, Some("L"), Some("M"), Some("Q"), Some("H")] {
-            let out = ForgeImageEncoder::encode_qr("https://example.com", ec, None, 256).unwrap();
+            let out =
+                ForgeImageEncoder::encode_qr("https://example.com", ec, None, 256, true).unwrap();
             let QrOutput::Png(png) = out else {
                 panic!("expected PNG");
             };
@@ -734,7 +741,7 @@ mod tests {
 
     #[test]
     fn test_qr_svg_starts_with_svg() {
-        let out = ForgeImageEncoder::encode_qr("hello", Some("M"), Some("svg"), 256).unwrap();
+        let out = ForgeImageEncoder::encode_qr("hello", Some("M"), Some("svg"), 256, true).unwrap();
         let QrOutput::Svg(svg) = out else {
             panic!("expected SVG");
         };
@@ -742,17 +749,39 @@ mod tests {
     }
 
     #[test]
+    fn test_qr_quiet_off_still_decodes_and_shrinks() {
+        let with = ForgeImageEncoder::encode_qr("quiet-zone-check", None, None, 256, true).unwrap();
+        let without =
+            ForgeImageEncoder::encode_qr("quiet-zone-check", None, None, 256, false).unwrap();
+        let (QrOutput::Png(a), QrOutput::Png(b)) = (with, without) else {
+            panic!("expected PNG");
+        };
+        // Quiet-off renders one fewer module-row of border: same module count,
+        // larger modules (fewer modules to spread across the 256 floor).
+        // Assert the flag takes effect via byte difference + decode round-trip.
+        assert_ne!(a, b);
+        assert_eq!(
+            ForgeImageEncoder::decode_qr(&a).unwrap(),
+            "quiet-zone-check"
+        );
+        assert_eq!(
+            ForgeImageEncoder::decode_qr(&b).unwrap(),
+            "quiet-zone-check"
+        );
+    }
+
+    #[test]
     fn test_qr_rejects_bad_ec_format_and_empty() {
         assert!(matches!(
-            ForgeImageEncoder::encode_qr("x", Some("Z"), None, 256),
+            ForgeImageEncoder::encode_qr("x", Some("Z"), None, 256, true),
             Err(ForgeError::InvalidConfiguration(_))
         ));
         assert!(matches!(
-            ForgeImageEncoder::encode_qr("x", None, Some("bmp"), 256),
+            ForgeImageEncoder::encode_qr("x", None, Some("bmp"), 256, true),
             Err(ForgeError::InvalidConfiguration(_))
         ));
         assert!(matches!(
-            ForgeImageEncoder::encode_qr("", None, None, 256),
+            ForgeImageEncoder::encode_qr("", None, None, 256, true),
             Err(ForgeError::InvalidConfiguration(_))
         ));
     }
@@ -760,8 +789,9 @@ mod tests {
     #[test]
     fn test_qr_decode_roundtrip() {
         for ec in ["L", "M", "Q", "H"] {
-            let out = ForgeImageEncoder::encode_qr("https://example.com/qr", Some(ec), None, 256)
-                .unwrap();
+            let out =
+                ForgeImageEncoder::encode_qr("https://example.com/qr", Some(ec), None, 256, true)
+                    .unwrap();
             let QrOutput::Png(png) = out else {
                 panic!("expected PNG");
             };

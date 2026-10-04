@@ -87,15 +87,22 @@ pub(crate) struct QrArgs {
     size: Option<u32>,
     ec: Option<String>,
     format: Option<String>,
+    quiet: Option<bool>,
 }
 
 #[tauri::command]
 pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
     use forge_image::QrOutput;
     let size = args.size.unwrap_or(256).clamp(128, 1024);
-    let out =
-        ForgeImageEncoder::encode_qr(&args.text, args.ec.as_deref(), args.format.as_deref(), size)
-            .map_err(CommandError::from)?;
+    let quiet = args.quiet.unwrap_or(true);
+    let out = ForgeImageEncoder::encode_qr(
+        &args.text,
+        args.ec.as_deref(),
+        args.format.as_deref(),
+        size,
+        quiet,
+    )
+    .map_err(CommandError::from)?;
     // Unique temp name: content hash avoids same-tick collisions + repeat overwrites.
     let mut hash: u64 = 0xcbf29ce484222325;
     for b in args.text.bytes() {
@@ -112,7 +119,6 @@ pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
         .map_err(CommandError::from)?;
     Ok(path.display().to_string())
 }
-
 /// `qr_decode` — read a QR code from an image file, return its text.
 /// Shared `ForgeImageEncoder::decode_qr` (single source with the CLI).
 /// No QR in image → `InvalidFile`; undecodable pixels → `DecodeFailed`.
