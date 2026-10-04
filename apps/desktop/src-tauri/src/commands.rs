@@ -784,6 +784,91 @@ pub fn compress_pdf(args: CompressPdfArgs) -> CommandResult<String> {
     Ok(target.display().to_string())
 }
 
+/// `render_pdf` — render PDF pages to images via hayro. Returns written paths.
+/// `pages` omitted/blank = all pages; `format` png|jpg|webp|bmp|tiff (default png).
+#[derive(Debug, Deserialize)]
+pub(crate) struct RenderPdfArgs {
+    input: String,
+    pages: Option<String>,
+    dpi: Option<u16>,
+    format: Option<String>,
+    on_collision: Option<String>,
+}
+
+#[tauri::command]
+pub fn render_pdf(args: RenderPdfArgs) -> CommandResult<Vec<String>> {
+    use forge_core::{ImageEncoder as _, PdfRenderer as _, PdfSplitter as _};
+    use forge_pdf::{HayroRenderer, LopdfSplitter};
+    let input = PathBuf::from(&args.input);
+    let fs = StdFileSystem;
+    let bytes = fs.read(&input).map_err(CommandError::from)?;
+    let detected =
+        forge_core::detect_input_format(&input, Some(&bytes)).map_err(CommandError::from)?;
+    if detected != ImageFormat::Pdf {
+        return Err(ForgeError::UnsupportedFormat(format!(
+            "render_pdf needs a PDF input, got {}",
+            detected.mime_type()
+        ))
+        .into());
+    }
+    let target = args
+        .format
+        .as_deref()
+        .map(ImageFormat::from_extension)
+        .unwrap_or(Some(ImageFormat::Png))
+        .ok_or_else(|| {
+            ForgeError::InvalidConfiguration(format!("unknown render format {:?}", args.format))
+        })?;
+    if !ForgeImageEncoder::OUTPUTS.contains(&target) {
+        return Err(ForgeError::UnsupportedFormat(format!(
+            "render cannot write {}",
+            target.mime_type()
+        ))
+        .into());
+    }
+    let page_list: Vec<u32> = match args.pages.as_deref().map(str::trim) {
+        None | Some("") => {
+            let total = LopdfSplitter
+                .page_count(&bytes)
+                .map_err(CommandError::from)?;
+            (1..=total).collect()
+        }
+        Some(raw) => PageRange::parse(raw).map_err(CommandError::from)?.pages,
+    };
+    let dpi = args.dpi.unwrap_or(200);
+    let renderer = HayroRenderer;
+    let images = renderer
+        .render(&bytes, &page_list, dpi)
+        .map_err(CommandError::from)?;
+    let stem = forge_core::canonical_stem_of(&input);
+    let dir = input
+        .parent()
+        .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
+    let policy = parse_collision(args.on_collision.as_deref())?;
+    let encoder = ForgeImageEncoder;
+    let mut outputs = Vec::with_capacity(images.len());
+    for (image, page) in images.iter().zip(page_list.iter()) {
+        let out = encoder
+            .encode(
+                image,
+                target,
+                &ConversionOptions {
+                    quality: 80,
+                    ..Default::default()
+                },
+            )
+            .map_err(CommandError::from)?;
+        let candidate = dir.join(format!("{stem}-p{page}.{}", target.extension()));
+        if let Some(t) =
+            forge_engine::apply_collision(&candidate, policy).map_err(CommandError::from)?
+        {
+            fs.write_atomic(&t, &out).map_err(CommandError::from)?;
+            outputs.push(t.display().to_string());
+        }
+    }
+    Ok(outputs)
+}
+
 /// `favicon` — icon set from one image: favicon.ico (16/32/48) + sized PNGs.
 /// Returns written paths (ico first), so the UI reveals the folder + snippet.
 #[derive(Debug, Deserialize)]
@@ -793,7 +878,6 @@ pub(crate) struct FaviconArgs {
     sizes: Option<String>,
     on_collision: Option<String>,
 }
-
 #[derive(Debug, Serialize)]
 pub(crate) struct FaviconDone {
     outputs: Vec<String>,

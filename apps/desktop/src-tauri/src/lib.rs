@@ -22,6 +22,7 @@ pub fn run() {
             commands::pdf_page_count,
             commands::merge_pdfs,
             commands::compress_pdf,
+            commands::render_pdf,
             commands::favicon,
             commands::list_presets,
             commands::get_history,

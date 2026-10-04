@@ -14,6 +14,8 @@ printpdf.workspace = true
 lopdf.workspace = true
 # PDF → .docx writer (pure-Rust OOXML, builder API; see dep table in PLAN.md).
 docx-rs.workspace = true
+# PDF → image renderer (pure-Rust hayro CPU rasterizer; replaces the stub).
+hayro.workspace = true
 
 [dev-dependencies]
 # OOXML content assertions (unzip word/document.xml in tests only).

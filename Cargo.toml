@@ -17,7 +17,9 @@ printpdf = { version = "0.12", default-features = false, features = ["images"] }
 kamadak-exif = "0.6"
 lopdf = { version = "0.44", default-features = false }
 docx-rs = { version = "0.4" }
-# QR encode (pure-Rust; PNG via `image`, vector via `svg` string builder — no native deps).
+# PDF → image render (hayro 0.6 CPU rasterizer, pure-Rust, Apache-2.0 OR MIT;
+# 0.8 needs rustc 1.92 > workspace MSRV 1.88, so pin 0.6).
+hayro = { version = "0.6" }
 qrcode = { version = "0.14", default-features = false, features = ["image", "svg"] }
 # QR decode (`rqrr`, pure-Rust, MIT/Apache/ISC; first-grid-wins).
 rqrr = { version = "0.11" }

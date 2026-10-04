@@ -191,6 +191,17 @@ export const api = {
         on_collision: "rename",
       },
     }),
+  /** Render PDF pages to images via hayro (default: all pages as PNG). */
+  renderPdf: (args: { input: string; pages?: string; dpi?: number; format?: string }) =>
+    invoke<string[]>("render_pdf", {
+      args: {
+        input: args.input,
+        pages: args.pages ?? null,
+        dpi: args.dpi ?? null,
+        format: args.format ?? null,
+        on_collision: "rename",
+      },
+    }),
   saveDiagram: (path: string, json: string) => invoke<string>("save_diagram", { args: { path, json } }),
   /** Load diagram project JSON. Validate with validateDoc (TS side). */
   loadDiagram: (path: string) => invoke<{ path: string; json: string }>("load_diagram", { path }),

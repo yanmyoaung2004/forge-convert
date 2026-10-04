@@ -5,8 +5,9 @@
 //! renderer is qualified (hayro vs pdfium-render — see docs/PLAN.md).
 
 use forge_core::{
-    CanonicalImage, ForgeError, PageFit, PageRange, PdfCompressLevel, PdfCompressor, PdfMerger,
-    PdfRenderer, PdfSplitter, PdfToDocx, PdfWriteSpec, PdfWriter, PixelFormat, Result,
+    CanonicalImage, ForgeError, ImageDimensions, PageFit, PageRange, PdfCompressLevel,
+    PdfCompressor, PdfMerger, PdfRenderer, PdfSplitter, PdfToDocx, PdfWriteSpec, PdfWriter,
+    PixelFormat, Result,
 };
 
 /// Max decompressed bytes per page for text extraction (bomb guard;
@@ -48,17 +49,92 @@ impl PdfWriter for ForgePdfWriter {
     }
 }
 
-/// PDF → image stub: honest `Unsupported` until a renderer qualifies.
+/// PDF → image via hayro 0.6 (pure-Rust CPU rasterizer, MSVC-safe, no DLL).
+/// Replaces the old stub: `render` CLI + desktop now go live.
+/// `dpi` scales 72pt units (`scale = dpi/72`); pages are 1-based; empty pages → `InvalidConfiguration`.
 #[derive(Debug, Default)]
-pub struct StubPdfRenderer;
+pub struct HayroRenderer;
 
-impl PdfRenderer for StubPdfRenderer {
-    fn render(&self, _pdf_bytes: &[u8], _pages: &[u32], _dpi: u16) -> Result<Vec<CanonicalImage>> {
-        Err(ForgeError::Unsupported {
-            capability: "pdf-to-image",
-            hint: "no renderer qualified yet (see ADR 009): rebuild with a render backend",
-        })
+impl PdfRenderer for HayroRenderer {
+    fn render(&self, pdf_bytes: &[u8], pages: &[u32], dpi: u16) -> Result<Vec<CanonicalImage>> {
+        use hayro::hayro_interpret::InterpreterSettings;
+        use hayro::hayro_syntax::Pdf;
+        use hayro::{render, RenderCache, RenderSettings};
+        if pdf_bytes.is_empty() {
+            return Err(ForgeError::InvalidFile("empty PDF".to_string()));
+        }
+        if pages.is_empty() {
+            return Err(ForgeError::InvalidConfiguration(
+                "render needs at least one page".to_string(),
+            ));
+        }
+        if !(1..=1200).contains(&dpi) {
+            return Err(ForgeError::InvalidConfiguration(format!(
+                "render dpi must be 1-1200, got {dpi}"
+            )));
+        }
+        // `Pdf::new` borrows `pdf_bytes` (zero-copy); load errors → `PdfReadFailed`.
+        let pdf = Pdf::new(pdf_bytes.to_vec())
+            .map_err(|e| ForgeError::PdfReadFailed(format!("pdf load: {e:?}")))?;
+        let total = pdf.pages().len();
+        for page in pages {
+            if *page == 0 || *page as usize > total {
+                return Err(ForgeError::InvalidConfiguration(format!(
+                    "page {page} out of range (PDF has {total} pages)"
+                )));
+            }
+        }
+        // 72pt → px scale; WHITE bg (print fidelity); default interpreter settings
+        // (bundled standard fonts via `embed-fonts`; no system-font lookup).
+        let scale = f32::from(dpi) / 72.0;
+        let interpreter = InterpreterSettings::default();
+        let settings = RenderSettings {
+            x_scale: scale,
+            y_scale: scale,
+            bg_color: vello_cpu_white(),
+            ..Default::default()
+        };
+        let cache = RenderCache::new();
+        let mut out = Vec::with_capacity(pages.len());
+        for page_no in pages {
+            // `pages()` derefs to `[Page]` (hayro-syntax `Deref` impl); 0-based index.
+            let page = &pdf.pages()[*page_no as usize - 1];
+            let pixmap = render(page, &cache, &interpreter, &settings);
+            out.push(pixmap_to_canonical(pixmap)?);
+        }
+        Ok(out)
     }
+}
+
+/// WHITE bg without naming the vello color type at our call site
+/// (hayro re-exports `vello_cpu`; keep the versioned path in one place).
+fn vello_cpu_white() -> hayro::vello_cpu::color::AlphaColor<hayro::vello_cpu::color::Srgb> {
+    use hayro::vello_cpu::color::palette::css::WHITE;
+    WHITE
+}
+
+/// Pixmap (premultiplied RGBA) → `CanonicalImage` (straight RGBA8).
+/// `take_unpremultiplied` handles the un-premultiply; empty pixmap → `PdfRenderFailed`.
+fn pixmap_to_canonical(pixmap: hayro::vello_cpu::Pixmap) -> Result<CanonicalImage> {
+    let w = pixmap.width() as u32;
+    let h = pixmap.height() as u32;
+    if w == 0 || h == 0 {
+        return Err(ForgeError::PdfRenderFailed("empty render".to_string()));
+    }
+    let dims = ImageDimensions::new(w, h)
+        .map_err(|_| ForgeError::PdfRenderFailed("bad render dims".to_string()))?;
+    let rgba = pixmap.take_unpremultiplied();
+    let mut pixels = Vec::with_capacity(rgba.len() * 4);
+    for px in &rgba {
+        pixels.extend_from_slice(&[px.r, px.g, px.b, px.a]);
+    }
+    Ok(CanonicalImage {
+        dimensions: dims,
+        pixel_format: PixelFormat::Rgba8,
+        color_space: forge_core::ColorSpace::Srgb,
+        pixels,
+        has_alpha: true,
+    })
 }
 
 /// PDF page ops over `lopdf` (ADR 009 foresaw direct use for split).
@@ -1143,12 +1219,49 @@ mod tests {
     }
 
     #[test]
-    fn test_render_stub_returns_unsupported() {
-        let renderer = StubPdfRenderer;
-        let err = renderer.render(b"%PDF-1.7", &[1], 200).unwrap_err();
-        assert!(matches!(err, ForgeError::Unsupported { .. }));
-        // And the PDF image target is known-undecodable by the image crate.
+    fn test_render_pdf_target_not_decodable() {
+        // PDF image target stays known-undecodable by the image crate.
         assert!(!ImageFormat::Pdf.descriptor().can_decode);
+    }
+    #[test]
+    fn test_render_roundtrip_page_to_image() {
+        let writer = ForgePdfWriter;
+        let pdf = writer
+            .write_images(&[rgba_image(32, 24)], &PdfWriteSpec::default())
+            .unwrap();
+        let renderer = HayroRenderer;
+        let images = renderer.render(&pdf, &[1], 72).unwrap();
+        assert_eq!(images.len(), 1);
+        assert!(images[0].dimensions.width > 0 && images[0].dimensions.height > 0);
+        assert_eq!(
+            images[0].pixels.len(),
+            images[0].dimensions.width as usize * images[0].dimensions.height as usize * 4
+        );
+    }
+
+    #[test]
+    fn test_render_rejects_garbage_and_bad_pages() {
+        let renderer = HayroRenderer;
+        assert!(matches!(
+            renderer.render(b"definitely-not-a-pdf", &[1], 72),
+            Err(ForgeError::PdfReadFailed(_))
+        ));
+        let writer = ForgePdfWriter;
+        let pdf = writer
+            .write_images(&[rgba_image(8, 8)], &PdfWriteSpec::default())
+            .unwrap();
+        assert!(matches!(
+            renderer.render(&pdf, &[99], 72),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
+        assert!(matches!(
+            renderer.render(&pdf, &[], 72),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
+        assert!(matches!(
+            renderer.render(&pdf, &[1], 0),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
     }
 
     /// Multi-page TEXT pdf via printpdf (extractable text, no binary fixture).

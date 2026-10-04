@@ -49,6 +49,8 @@ const pdfRange = ref("1-2");
 const pdfBusy = ref(false);
 const pdfResult = ref<string | null>(null);
 const pdfCompressLevel = ref("balanced");
+const pdfRenderDpi = ref(200);
+const pdfRenderFormat = ref("png");
 const mergeFiles = ref<string[]>([]);
 const revealFailed = ref<string | null>(null);
 const dragActive = ref(false);
@@ -85,7 +87,6 @@ async function refresh() {
     target.value = encodable.value[0]?.id ?? "webp";
   }
 }
-
 async function addFiles() {
   const picked = await pickFiles();
   if (!picked) return;
@@ -266,11 +267,30 @@ async function runPdfCompress() {
     pdfBusy.value = false;
   }
 }
+async function runPdfRender() {
+  if (!pdfFile.value || pdfBusy.value) return;
+  pdfBusy.value = true;
+  error.value = null;
+  pdfResult.value = null;
+  try {
+    const paths = await api.renderPdf({
+      input: pdfFile.value,
+      pages: pdfRange.value.trim() ? pdfRange.value : undefined,
+      dpi: pdfRenderDpi.value,
+      format: pdfRenderFormat.value,
+    });
+    pdfResult.value = paths[0] ?? null;
+    history.value = await api.history(20);
+  } catch (err) {
+    error.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
+  } finally {
+    pdfBusy.value = false;
+  }
+}
 async function convert() {
   if (!canConvert.value) return;
   busy.value = true;
   error.value = null;
-  result.value = null;
   progress.value = `Converting ${files.value.length} file${files.value.length === 1 ? "" : "s"}…`;
   try {
     result.value = await api.convert({
@@ -620,6 +640,23 @@ onMounted(() => {
           {{ pdfBusy ? "Compressing…" : "Compress PDF" }}
         </button>
       </div>
+      <div v-if="pdfFile" class="controls card">
+        <label class="field">
+          <span>Render DPI</span>
+          <input v-model.number="pdfRenderDpi" type="number" min="1" max="1200" />
+        </label>
+        <label class="field">
+          <span>Format</span>
+          <select v-model="pdfRenderFormat">
+            <option value="png">PNG</option>
+            <option value="jpg">JPEG</option>
+            <option value="webp">WebP</option>
+          </select>
+        </label>
+        <button class="btn grow" :disabled="pdfBusy" @click="runPdfRender">
+          {{ pdfBusy ? "Rendering…" : "Render pages" }}
+        </button>
+      </div>
       <div class="controls card">
         <div class="drop-row">
           <button class="btn" @click="pickMergeFiles">＋ Merge PDFs ({{ mergeFiles.length }})</button>
@@ -642,7 +679,6 @@ onMounted(() => {
         </button>
       </div>
     </section>
-
     <section v-if="tab === 'diagram'" class="diagram-wrap">
       <DiagramTab />
     </section>

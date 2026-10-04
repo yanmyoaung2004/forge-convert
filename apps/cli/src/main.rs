@@ -11,11 +11,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use forge_core::{
     ConversionOptions, ConversionRequest, ConversionResult, FileSystem as _, ForgeError,
     HistoryStore as _, ImageDecoder as _, ImageFormat, JobEventSink, JobId, JobProgress,
-    MetadataPolicy, NeverCancel, OutputTarget, PdfRenderer as _, PdfWriteSpec, PdfWriter as _,
+    MetadataPolicy, NeverCancel, OutputTarget, PdfWriteSpec, PdfWriter as _,
 };
 use forge_engine::{BatchConfig, CancelFlag, EngineDeps, NullSink, Orchestrator, StdFileSystem};
 use forge_image::{ForgeImageDecoder, ForgeImageEncoder, QrOutput, ResizeStep};
-use forge_pdf::{ForgePdfWriter, StubPdfRenderer};
+use forge_pdf::{ForgePdfWriter, HayroRenderer};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -144,7 +144,7 @@ enum Command {
         #[arg(long, default_value_t = false)]
         landscape: bool,
     },
-    /// Render PDF pages to images (stubbed until a renderer qualifies).
+    /// Render PDF pages to images via hayro (pure-Rust CPU rasterizer).
     Render {
         /// Input PDF.
         input: PathBuf,
@@ -689,16 +689,65 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             dpi,
             pages,
         } => {
-            // Honest stub: surface Unsupported with the qualified-backend hint.
+            use forge_core::{ImageEncoder as _, PdfRenderer as _};
             let bytes = StdFileSystem.read(&input)?;
-            let _format = forge_core::detect_input_format(&input, Some(&bytes))?;
-            let _pages = pages
+            let detected = forge_core::detect_input_format(&input, Some(&bytes))?;
+            if detected != ImageFormat::Pdf {
+                return Err(ForgeError::UnsupportedFormat(format!(
+                    "render needs a PDF input, got {}",
+                    detected.mime_type()
+                )));
+            }
+            let target = format.to_image_format();
+            let range = pages
                 .as_deref()
                 .map(forge_core::PageRange::parse)
                 .transpose()?;
-            let _ = (format, dpi);
-            let renderer = StubPdfRenderer;
-            let _ = renderer.render(&bytes, &[1], dpi)?;
+            // Default: all pages (via page count); else the parsed range.
+            let page_list: Vec<u32> = match range {
+                Some(r) => r.pages.clone(),
+                None => {
+                    use forge_core::PdfSplitter as _;
+                    let total = forge_pdf::LopdfSplitter.page_count(&bytes)?;
+                    (1..=total).collect()
+                }
+            };
+            let renderer = HayroRenderer;
+            let images = renderer.render(&bytes, &page_list, dpi)?;
+            let stem = forge_core::canonical_stem_of(&input);
+            let dir = input
+                .parent()
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+            let encoder = ForgeImageEncoder;
+            for (image, page) in images.iter().zip(page_list.iter()) {
+                let bytes = encoder.encode(
+                    image,
+                    target,
+                    &ConversionOptions {
+                        quality: 80,
+                        ..Default::default()
+                    },
+                )?;
+                let candidate = dir.join(format!("{stem}-p{page}.{}", target.extension()));
+                match resolve_explicit_output(&candidate, CliCollision::Rename.to_policy())? {
+                    Some(t) => {
+                        StdFileSystem.write_atomic(&t, &bytes)?;
+                        println!("{}", t.display());
+                    }
+                    None => {
+                        println!("{}", candidate.display());
+                        eprintln!("skipped (exists): {}", candidate.display());
+                    }
+                }
+            }
+            record_history(
+                "render",
+                &input,
+                &dir.join(format!("{stem}-p{}.{}", page_list[0], target.extension())),
+                target,
+                &ConversionOptions::default(),
+                0,
+            );
             Ok(())
         }
         Command::Info { input } => {
