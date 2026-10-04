@@ -30,6 +30,9 @@ const qrSize = ref(256);
 const qrEc = ref("M");
 const qrFormat = ref<"png" | "svg">("png");
 const qrQuiet = ref(true);
+const qrDark = ref("#000000");
+const qrLight = ref("#ffffff");
+const qrLogoPath = ref<string | null>(null);
 const qrMsg = ref<string | null>(null);
 const qrPath = ref<string | null>(null);
 const qrDecoded = ref<string | null>(null);
@@ -105,12 +108,20 @@ async function doQr(): Promise<void> {
   qrPath.value = null;
   toolError.value = null;
   try {
-    const path = await api.qrPng({ text: qrText.value, size: qrSize.value, ec: qrEc.value, format: qrFormat.value, quiet: qrQuiet.value });
+    const path = await api.qrPng({ text: qrText.value, size: qrSize.value, ec: qrEc.value, format: qrFormat.value, quiet: qrQuiet.value, dark: qrDark.value, light: qrLight.value, logoPath: qrLogoPath.value });
     qrPath.value = path;
     qrMsg.value = `Wrote ${path}`;
   } catch (err) {
     toolError.value = isCommandError(err) ? `${err.kind}: ${err.message}` : String(err);
   }
+}
+async function pickQrLogo(): Promise<void> {
+  const picked = await open({ multiple: false });
+  const path = Array.isArray(picked) ? picked[0] : picked;
+  qrLogoPath.value = path ?? null;
+}
+function clearQrLogo(): void {
+  qrLogoPath.value = null;
 }
 async function revealQr(): Promise<void> {
   if (!qrPath.value) return;
@@ -301,6 +312,12 @@ async function doHash(): Promise<void> {
           <button class="btn ghost sm" :class="{ on: qrFormat === 'png' }" @click="qrFormat = 'png'">PNG</button>
           <button class="btn ghost sm" :class="{ on: qrFormat === 'svg' }" @click="qrFormat = 'svg'">SVG</button>
           <label title="White border around the code (scanners expect it)"><input v-model="qrQuiet" type="checkbox" /> Quiet zone</label>
+        </div>
+        <div class="row">
+          <label>Dark <input v-model="qrDark" type="color" aria-label="Dark module color" /></label>
+          <label>Light <input v-model="qrLight" type="color" aria-label="Light module color" /></label>
+          <button class="btn ghost sm" @click="pickQrLogo">Logo…</button>
+          <button v-if="qrLogoPath" class="btn ghost sm" @click="clearQrLogo" title="Remove logo">✕</button>
           <button class="btn ghost sm" @click="doQr">Generate</button>
         </div>
         <p v-if="qrMsg" class="dim">{{ qrMsg }}</p>

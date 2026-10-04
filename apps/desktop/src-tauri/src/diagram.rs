@@ -88,19 +88,32 @@ pub(crate) struct QrArgs {
     ec: Option<String>,
     format: Option<String>,
     quiet: Option<bool>,
+    dark: Option<String>,
+    light: Option<String>,
+    logo_path: Option<String>,
 }
 
 #[tauri::command]
 pub fn qr_png(args: QrArgs) -> DiagramResult<String> {
-    use forge_image::QrOutput;
+    use forge_image::{QrOutput, QrStyle};
     let size = args.size.unwrap_or(256).clamp(128, 1024);
     let quiet = args.quiet.unwrap_or(true);
+    let style =
+        QrStyle::parse(args.dark.as_deref(), args.light.as_deref()).map_err(CommandError::from)?;
+    let logo_bytes = args
+        .logo_path
+        .as_ref()
+        .map(|p| StdFileSystem.read(&PathBuf::from(p)))
+        .transpose()
+        .map_err(CommandError::from)?;
     let out = ForgeImageEncoder::encode_qr(
         &args.text,
         args.ec.as_deref(),
         args.format.as_deref(),
         size,
         quiet,
+        style,
+        logo_bytes.as_deref(),
     )
     .map_err(CommandError::from)?;
     // Unique temp name: content hash avoids same-tick collisions + repeat overwrites.

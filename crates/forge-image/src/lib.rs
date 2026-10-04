@@ -170,6 +170,8 @@ impl ForgeImageEncoder {
     /// QR encode, shared by CLI + desktop (single source; no duplicated limits).
     /// `ec` is `L|M|Q|H` (default `M` = old behavior); `format` is `png|svg`
     /// (default `png`). `quiet` toggles the white border (default on).
+    /// `style` recolours modules (default black-on-white); `logo` composites a
+    /// small raster center-mark (PNG only, ≤20% of canvas).
     /// Text cap 2048 bytes, size clamp 128–1024.
     pub fn encode_qr(
         text: &str,
@@ -177,6 +179,8 @@ impl ForgeImageEncoder {
         format: Option<&str>,
         size: u32,
         quiet: bool,
+        style: QrStyle,
+        logo: Option<&[u8]>,
     ) -> Result<QrOutput> {
         if text.is_empty() {
             return Err(ForgeError::InvalidConfiguration(
@@ -204,9 +208,18 @@ impl ForgeImageEncoder {
             .map_err(|e| ForgeError::EncodeFailed(format!("qr: {e}")))?;
         match format.unwrap_or("png").to_ascii_lowercase().as_str() {
             "svg" => {
+                if logo.is_some() {
+                    return Err(ForgeError::InvalidConfiguration(
+                        "qr logo needs PNG output (vector has no raster rule)".to_string(),
+                    ));
+                }
+                let dark = style.dark_svg();
+                let light = style.light_svg();
                 let svg: String = code
                     .render::<qrcode::render::svg::Color>()
                     .quiet_zone(quiet)
+                    .dark_color(qrcode::render::svg::Color(&dark))
+                    .light_color(qrcode::render::svg::Color(&light))
                     .build();
                 if !svg.contains("<svg") {
                     return Err(ForgeError::EncodeFailed("qr svg render empty".to_string()));
@@ -216,11 +229,16 @@ impl ForgeImageEncoder {
             "png" => {
                 // Scale modules to the requested size (min_dimensions only
                 // grows when too small; module_dimensions sets an exact floor).
-                let img = code
-                    .render::<image::Luma<u8>>()
+                let mut img = code
+                    .render::<image::Rgb<u8>>()
                     .quiet_zone(quiet)
+                    .dark_color(image::Rgb(style.dark_rgb()))
+                    .light_color(image::Rgb(style.light_rgb()))
                     .min_dimensions(size_px, size_px)
                     .build();
+                if let Some(logo_bytes) = logo {
+                    composite_logo(&mut img, logo_bytes)?;
+                }
                 let mut png: Vec<u8> = Vec::new();
                 img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
                     .map_err(|e| ForgeError::EncodeFailed(format!("qr png: {e}")))?;
@@ -267,6 +285,124 @@ pub enum QrOutput {
     Svg(String),
 }
 
+/// QR module colors (hex `#rrggbb`; default black-on-white).
+#[derive(Debug, Clone)]
+pub struct QrStyle {
+    dark: [u8; 3],
+    light: [u8; 3],
+}
+
+impl Default for QrStyle {
+    fn default() -> Self {
+        Self {
+            dark: [0, 0, 0],
+            light: [255, 255, 255],
+        }
+    }
+}
+
+impl QrStyle {
+    /// Parse `dark`/`light` hex (`None` = default side). `#rgb` + `#rrggbb`, `#` optional.
+    pub fn parse(dark: Option<&str>, light: Option<&str>) -> Result<Self> {
+        Ok(Self {
+            dark: hex_opt(dark, [0, 0, 0], "dark")?,
+            light: hex_opt(light, [255, 255, 255], "light")?,
+        })
+    }
+
+    fn dark_rgb(&self) -> [u8; 3] {
+        self.dark
+    }
+
+    fn light_rgb(&self) -> [u8; 3] {
+        self.light
+    }
+
+    fn dark_svg(&self) -> String {
+        format!(
+            "#{:02x}{:02x}{:02x}",
+            self.dark[0], self.dark[1], self.dark[2]
+        )
+    }
+
+    fn light_svg(&self) -> String {
+        format!(
+            "#{:02x}{:02x}{:02x}",
+            self.light[0], self.light[1], self.light[2]
+        )
+    }
+}
+
+/// Parse one hex side (`None` = default). Rejects non-hex + wrong lengths.
+fn hex_opt(raw: Option<&str>, fallback: [u8; 3], side: &str) -> Result<[u8; 3]> {
+    let Some(mut s) = raw.map(str::trim) else {
+        return Ok(fallback);
+    };
+    s = s.strip_prefix('#').unwrap_or(s);
+    let full = match s.len() {
+        3 => s.chars().flat_map(|c| [c, c]).collect::<String>(),
+        6 => s.to_string(),
+        _ => {
+            return Err(ForgeError::InvalidConfiguration(format!(
+                "qr {side} color must be #rgb or #rrggbb, got {raw:?}"
+            )));
+        }
+    };
+    u8_from_hex(&full).map_err(|_| {
+        ForgeError::InvalidConfiguration(format!("qr {side} color must be hex, got {raw:?}"))
+    })
+}
+
+/// Six hex chars → RGB triple.
+fn u8_from_hex(s: &str) -> std::result::Result<[u8; 3], std::num::ParseIntError> {
+    Ok([
+        u8::from_str_radix(&s[0..2], 16)?,
+        u8::from_str_radix(&s[2..4], 16)?,
+        u8::from_str_radix(&s[4..6], 16)?,
+    ])
+}
+
+/// Composite a logo center-mark (≤20% of the smaller side, white padded box).
+/// Logo bytes decode via `image` (any input format); garbage → `DecodeFailed`.
+fn composite_logo(img: &mut image::RgbImage, logo_bytes: &[u8]) -> Result<()> {
+    let logo = image::load_from_memory(logo_bytes)
+        .map_err(|e| ForgeError::DecodeFailed(format!("qr logo unreadable: {e}")))?
+        .to_rgba8();
+    let (w, h) = (img.width(), img.height());
+    let side = (w.min(h) as f32 * 0.2) as u32;
+    if side < 8 {
+        return Err(ForgeError::InvalidConfiguration(
+            "qr canvas too small for logo".to_string(),
+        ));
+    }
+    let scaled = image::imageops::resize(&logo, side, side, image::imageops::FilterType::Lanczos3);
+    // White backing box so dark modules don't bleed through translucent logos.
+    let pad = (side as f32 * 0.12) as u32;
+    let box_side = side + pad * 2;
+    let (bx, by) = ((w - box_side) / 2, (h - box_side) / 2);
+    for y in by..by + box_side {
+        for x in bx..bx + box_side {
+            img.put_pixel(x, y, image::Rgb([255, 255, 255]));
+        }
+    }
+    // Manual alpha blend (no temp-image round-trip; keeps the Rgb canvas type).
+    let (lx, ly) = ((w - side) / 2, (h - side) / 2);
+    for (dx, dy, px) in scaled.enumerate_pixels() {
+        let alpha = f32::from(px[3]) / 255.0;
+        let dst = img.get_pixel(lx + dx, ly + dy);
+        let blend = |s: u8, d: u8| (f32::from(s) * alpha + f32::from(d) * (1.0 - alpha)) as u8;
+        img.put_pixel(
+            lx + dx,
+            ly + dy,
+            image::Rgb([
+                blend(px[0], dst[0]),
+                blend(px[1], dst[1]),
+                blend(px[2], dst[2]),
+            ]),
+        );
+    }
+    Ok(())
+}
 impl ImageEncoder for ForgeImageEncoder {
     fn supported_outputs(&self) -> &'static [ImageFormat] {
         Self::OUTPUTS
@@ -727,8 +863,16 @@ mod tests {
     #[test]
     fn test_qr_png_magic_and_dims() {
         for ec in [None, Some("L"), Some("M"), Some("Q"), Some("H")] {
-            let out =
-                ForgeImageEncoder::encode_qr("https://example.com", ec, None, 256, true).unwrap();
+            let out = ForgeImageEncoder::encode_qr(
+                "https://example.com",
+                ec,
+                None,
+                256,
+                true,
+                QrStyle::default(),
+                None,
+            )
+            .unwrap();
             let QrOutput::Png(png) = out else {
                 panic!("expected PNG");
             };
@@ -741,7 +885,16 @@ mod tests {
 
     #[test]
     fn test_qr_svg_starts_with_svg() {
-        let out = ForgeImageEncoder::encode_qr("hello", Some("M"), Some("svg"), 256, true).unwrap();
+        let out = ForgeImageEncoder::encode_qr(
+            "hello",
+            Some("M"),
+            Some("svg"),
+            256,
+            true,
+            QrStyle::default(),
+            None,
+        )
+        .unwrap();
         let QrOutput::Svg(svg) = out else {
             panic!("expected SVG");
         };
@@ -750,9 +903,26 @@ mod tests {
 
     #[test]
     fn test_qr_quiet_off_still_decodes_and_shrinks() {
-        let with = ForgeImageEncoder::encode_qr("quiet-zone-check", None, None, 256, true).unwrap();
-        let without =
-            ForgeImageEncoder::encode_qr("quiet-zone-check", None, None, 256, false).unwrap();
+        let with = ForgeImageEncoder::encode_qr(
+            "quiet-zone-check",
+            None,
+            None,
+            256,
+            true,
+            QrStyle::default(),
+            None,
+        )
+        .unwrap();
+        let without = ForgeImageEncoder::encode_qr(
+            "quiet-zone-check",
+            None,
+            None,
+            256,
+            false,
+            QrStyle::default(),
+            None,
+        )
+        .unwrap();
         let (QrOutput::Png(a), QrOutput::Png(b)) = (with, without) else {
             panic!("expected PNG");
         };
@@ -772,26 +942,82 @@ mod tests {
 
     #[test]
     fn test_qr_rejects_bad_ec_format_and_empty() {
+        let def = QrStyle::default();
         assert!(matches!(
-            ForgeImageEncoder::encode_qr("x", Some("Z"), None, 256, true),
+            ForgeImageEncoder::encode_qr("x", Some("Z"), None, 256, true, def.clone(), None),
             Err(ForgeError::InvalidConfiguration(_))
         ));
         assert!(matches!(
-            ForgeImageEncoder::encode_qr("x", None, Some("bmp"), 256, true),
+            ForgeImageEncoder::encode_qr("x", None, Some("bmp"), 256, true, def.clone(), None),
             Err(ForgeError::InvalidConfiguration(_))
         ));
         assert!(matches!(
-            ForgeImageEncoder::encode_qr("", None, None, 256, true),
+            ForgeImageEncoder::encode_qr("", None, None, 256, true, def.clone(), None),
+            Err(ForgeError::InvalidConfiguration(_))
+        ));
+        // Bad hex + logo-with-SVG both refuse cleanly.
+        assert!(QrStyle::parse(Some("#zzz"), None).is_err());
+        assert!(QrStyle::parse(Some("#12"), None).is_err());
+        let png = ForgeImageEncoder::encode_qr("x", None, None, 256, true, def, None).unwrap();
+        let QrOutput::Png(png) = png else {
+            panic!("expected PNG");
+        };
+        assert!(matches!(
+            ForgeImageEncoder::encode_qr(
+                "x",
+                None,
+                Some("svg"),
+                256,
+                true,
+                QrStyle::default(),
+                Some(&png)
+            ),
             Err(ForgeError::InvalidConfiguration(_))
         ));
     }
 
     #[test]
+    fn test_qr_styled_colors_and_logo_decode() {
+        let style = QrStyle::parse(Some("#1a2b3c"), Some("#f0e6d2")).unwrap();
+        let out =
+            ForgeImageEncoder::encode_qr("styled-qr", Some("H"), None, 256, true, style, None)
+                .unwrap();
+        let QrOutput::Png(png) = out else {
+            panic!("expected PNG");
+        };
+        assert_eq!(&png[0..4], &[0x89, 0x50, 0x4E, 0x47]);
+        assert_eq!(ForgeImageEncoder::decode_qr(&png).unwrap(), "styled-qr");
+        // Logo embed at EC-H still decodes (logo fixture: reuse the PNG itself).
+        let out = ForgeImageEncoder::encode_qr(
+            "logo-qr",
+            Some("H"),
+            None,
+            256,
+            true,
+            QrStyle::default(),
+            Some(&png),
+        )
+        .unwrap();
+        let QrOutput::Png(with_logo) = out else {
+            panic!("expected PNG");
+        };
+        assert_ne!(png, with_logo);
+        assert_eq!(ForgeImageEncoder::decode_qr(&with_logo).unwrap(), "logo-qr");
+    }
+
+    #[test]
     fn test_qr_decode_roundtrip() {
         for ec in ["L", "M", "Q", "H"] {
-            let out =
-                ForgeImageEncoder::encode_qr("https://example.com/qr", Some(ec), None, 256, true)
-                    .unwrap();
+            let out = ForgeImageEncoder::encode_qr(
+                "https://example.com/qr",
+                Some(ec),
+                None,
+                256,
+                true,
+                QrStyle::default(),
+                None,
+            )
+            .unwrap();
             let QrOutput::Png(png) = out else {
                 panic!("expected PNG");
             };

@@ -265,6 +265,15 @@ enum Command {
         /// Drop the white quiet-zone border (default: keep it).
         #[arg(long, default_value_t = false)]
         no_quiet_zone: bool,
+        /// Dark module color (#rgb or #rrggbb; default black).
+        #[arg(long)]
+        dark: Option<String>,
+        /// Light module color (#rgb or #rrggbb; default white).
+        #[arg(long)]
+        light: Option<String>,
+        /// Logo image composited center (PNG only, ≤20% canvas, EC-H recommended).
+        #[arg(long)]
+        logo: Option<PathBuf>,
         /// Existing-output behavior.
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
@@ -275,6 +284,7 @@ enum Command {
         list: PathBuf,
         /// Output directory (default: `qr-batch` in cwd).
         out_dir: Option<PathBuf>,
+        /// Longest side in px, 128–1024 (default 256; PNG only).
         #[arg(long, default_value_t = 256)]
         size: u32,
         /// Error correction: L (7%) | M (15%) | Q (25%) | H (30%). Default M.
@@ -286,6 +296,15 @@ enum Command {
         /// Drop the white quiet-zone border (default: keep it).
         #[arg(long, default_value_t = false)]
         no_quiet_zone: bool,
+        /// Dark module color (#rgb or #rrggbb; default black).
+        #[arg(long)]
+        dark: Option<String>,
+        /// Light module color (#rgb or #rrggbb; default white).
+        #[arg(long)]
+        light: Option<String>,
+        /// Logo image composited center (PNG only, ≤20% canvas, EC-H recommended).
+        #[arg(long)]
+        logo: Option<PathBuf>,
         /// Existing-output behavior.
         #[arg(long, value_enum, default_value_t = CliCollision::Rename)]
         on_collision: CliCollision,
@@ -296,10 +315,7 @@ enum Command {
         input: PathBuf,
     },
     /// Decode a QR code from an image file (prints text to stdout).
-    QrDecode {
-        /// Input image (PNG/JPEG/WebP/BMP/TIFF).
-        input: PathBuf,
-    },
+    QrDecode { input: PathBuf },
 }
 
 /// CLI image formats (PDF only where it makes sense per command).
@@ -1087,10 +1103,24 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             ec,
             format,
             no_quiet_zone,
+            dark,
+            light,
+            logo,
             on_collision,
         } => {
+            use forge_image::QrStyle;
             let quiet = !no_quiet_zone;
-            let out = ForgeImageEncoder::encode_qr(&text, Some(&ec), Some(&format), size, quiet)?;
+            let style = QrStyle::parse(dark.as_deref(), light.as_deref())?;
+            let logo_bytes = logo.as_ref().map(|p| StdFileSystem.read(p)).transpose()?;
+            let out = ForgeImageEncoder::encode_qr(
+                &text,
+                Some(&ec),
+                Some(&format),
+                size,
+                quiet,
+                style,
+                logo_bytes.as_deref(),
+            )?;
             let (default_name, bytes) = match &out {
                 QrOutput::Png(png) => ("qr.png", png.clone()),
                 QrOutput::Svg(svg) => ("qr.svg", svg.as_bytes().to_vec()),
@@ -1145,8 +1175,15 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             ec,
             format,
             no_quiet_zone,
+            dark,
+            light,
+            logo,
             on_collision,
         } => {
+            use forge_image::QrStyle;
+            let style = QrStyle::parse(dark.as_deref(), light.as_deref())?;
+            let logo_bytes = logo.as_ref().map(|p| StdFileSystem.read(p)).transpose()?;
+            let quiet = !no_quiet_zone;
             // CRLF tolerated (trim), BOM stripped (Windows-authored lists).
             let raw = StdFileSystem.read(&list)?;
             let text = String::from_utf8(raw)
@@ -1177,8 +1214,15 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             let mut failed = 0usize;
             let mut skipped = 0usize;
             for (i, payload) in payloads.iter().enumerate() {
-                let quiet = !no_quiet_zone;
-                match ForgeImageEncoder::encode_qr(payload, Some(&ec), Some(&format), size, quiet) {
+                match ForgeImageEncoder::encode_qr(
+                    payload,
+                    Some(&ec),
+                    Some(&format),
+                    size,
+                    quiet,
+                    style.clone(),
+                    logo_bytes.as_deref(),
+                ) {
                     Ok(out) => {
                         let bytes = match &out {
                             QrOutput::Png(png) => png.clone(),
@@ -1213,7 +1257,7 @@ fn run(cli: Cli) -> Result<(), ForgeError> {
             if let Some(first) = std::fs::read_dir(&dir)
                 .ok()
                 .and_then(|mut d| d.next())
-                .and_then(|e| e.ok())
+                .and_then(|r| r.ok())
             {
                 record_history(
                     "qr-batch",
