@@ -450,11 +450,11 @@ onUnmounted(() => {
 <template>
   <section class="diagram" aria-label="SVG Diagram editor">
     <div class="toolbar" role="toolbar" aria-label="Diagram tools">
-      <button class="btn ghost sm" :class="{ on: canvasTool === 'select' }" title="Select tool (V): drag = selection box" @click="setCanvasTool('select')">➤ Select</button>
-      <button class="btn ghost sm" :class="{ on: canvasTool === 'pan' }" title="Pan tool (H or Space+drag): drag = move canvas" @click="setCanvasTool('pan')">✋ Pan</button>
+      <button class="btn ghost sm tool" :class="{ on: canvasTool === 'select' }" title="Select tool (V): drag = selection box" @click="setCanvasTool('select')"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2l8 6-4.5.8L9 13 4 2Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></svg><span>Select</span></button>
+      <button class="btn ghost sm tool" :class="{ on: canvasTool === 'pan' }" title="Pan tool (H or Space+drag): drag = move canvas" @click="setCanvasTool('pan')"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12M8 2L6 4M8 2l2 2M8 14l-2-2M8 14l2-2M2 8l2-2M2 8l2 2M14 8l-2-2M14 8l-2 2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg><span>Pan</span></button>
       <span class="sep" />
-      <button class="btn ghost sm" :disabled="!canUndo" title="Undo (Ctrl+Z)" @click="doUndo">↩ Undo</button>
-      <button class="btn ghost sm" :disabled="!canRedo" title="Redo (Ctrl+Y)" @click="doRedo">↪ Redo</button>
+      <button class="btn ghost sm tool" :disabled="!canUndo" title="Undo (Ctrl+Z)" @click="doUndo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3L3 6l3 3M3 6h6a4 4 0 0 1 0 8h-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg><span>Undo</span></button>
+      <button class="btn ghost sm tool" :disabled="!canRedo" title="Redo (Ctrl+Y)" @click="doRedo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3l3 3-3 3M13 6H7a4 4 0 0 0 0 8h2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg><span>Redo</span></button>
       <span class="sep" />
       <button class="btn ghost sm" title="Zoom out" @click="zoom = Math.max(0.25, Math.round((zoom - 0.1) * 10) / 10)">−</button>
       <span class="zoom" aria-live="polite">{{ Math.round(zoom * 100) }}%</span>
@@ -583,7 +583,9 @@ onUnmounted(() => {
 }
 .btn.sm { padding: 0.35rem 0.65rem; font-size: 0.82rem; }
 .btn.ghost { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
-.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.ghost.tool { display: inline-flex; align-items: center; gap: 0.35rem; }
+.btn.ghost.tool svg { width: 14px; height: 14px; flex: none; }
+.btn.ghost.on { background: rgb(232 106 44 / 0.14); color: var(--brand); border-color: rgb(232 106 44 / 0.4); }
 .sep { width: 1px; height: 1.4rem; background: var(--line); }
 .zoom { min-width: 3rem; text-align: center; font-variant-numeric: tabular-nums; color: var(--dim); }
 .tpl { border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.4rem; font: inherit; background: var(--bg-raise); color: var(--ink); }
