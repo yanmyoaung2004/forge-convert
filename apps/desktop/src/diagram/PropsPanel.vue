@@ -95,7 +95,7 @@ function num(v: string, fallback: number): number {
   width: clamp(210px, 18vw, 280px);
   flex: none;
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: 12px;
   padding: 0.8rem;
   overflow-y: auto;
@@ -104,14 +104,15 @@ function num(v: string, fallback: number): number {
 @media (max-width: 900px) {
   .props { width: 100%; max-height: 260px; }
 }
-.props h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
-.props h4 { margin: 0.7rem 0 0.35rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }
-.group { border-top: 1px solid var(--line); padding-top: 0.3rem; }
+.props h3 { margin: 0 0 0.5rem; font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dim); }
+.props h4 { margin: 0.7rem 0 0.35rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }
+.group { border-top: 1px solid var(--line-soft); padding-top: 0.3rem; }
 .group:first-of-type { border-top: 0; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
-label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; margin-bottom: 0.4rem; }
+label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; margin-bottom: 0.4rem; color: var(--ink-dim); }
 input[type="number"], input[type="text"], select, textarea {
   border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.45rem; font: inherit;
+  background: var(--bg-raise); color: var(--ink);
 }
 input[type="color"] { width: 100%; height: 28px; border: 1px solid var(--line); border-radius: 8px; padding: 0; background: none; }
 .hex { font-family: ui-monospace, monospace; font-size: 0.75rem; }

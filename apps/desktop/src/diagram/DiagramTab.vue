@@ -578,28 +578,28 @@ onUnmounted(() => {
 .diagram { display: flex; flex-direction: column; gap: 0.7rem; }
 .toolbar {
   display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--line);
+  background: var(--panel); border: 1px solid var(--line-soft);
   border-radius: 12px; padding: 0.5rem 0.6rem;
 }
 .btn.sm { padding: 0.35rem 0.65rem; font-size: 0.82rem; }
-.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn.ghost { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .sep { width: 1px; height: 1.4rem; background: var(--line); }
-.zoom { min-width: 3rem; text-align: center; font-variant-numeric: tabular-nums; }
-.tpl { border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.4rem; font: inherit; }
+.zoom { min-width: 3rem; text-align: center; font-variant-numeric: tabular-nums; color: var(--dim); }
+.tpl { border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.4rem; font: inherit; background: var(--bg-raise); color: var(--ink); }
 .spacer { flex: 1; }
 .workbench { display: flex; gap: 0.7rem; align-items: stretch; width: 100%; min-height: 420px; }
 .library {
   width: clamp(140px, 14vw, 200px); flex: none; background: var(--panel);
-  border: 1px solid var(--line); border-radius: 12px; padding: 0.7rem;
+  border: 1px solid var(--line-soft); border-radius: 12px; padding: 0.7rem;
   max-height: 70vh; overflow-y: auto;
 }
 .library h4 { margin: 0.5rem 0 0.35rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }
 .library h4:first-child { margin-top: 0; }
 .pal {
   display: flex; align-items: center; gap: 0.45rem;
-  border: 1px solid var(--line); border-radius: 8px; padding: 0.32rem 0.45rem;
-  margin-bottom: 0.3rem; cursor: grab; font-size: 0.83rem; background: #fffdf9;
+  border: 1px solid var(--line-soft); border-radius: 8px; padding: 0.32rem 0.45rem;
+  margin-bottom: 0.3rem; cursor: grab; font-size: 0.83rem; background: var(--bg-raise); color: var(--ink-dim);
 }
 .pal:active { cursor: grabbing; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 2px solid; flex: none; }

@@ -341,20 +341,22 @@ async function doHash(): Promise<void> {
 </template>
 
 <style scoped>
-.tools { display: flex; flex-direction: column; gap: 0.7rem; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.7rem; }
-.panel { padding: 0.9rem; }
-.panel h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
-.row { display: flex; gap: 0.4rem; align-items: center; margin: 0.4rem 0; flex-wrap: wrap; }
-textarea, input { border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.5rem; font: inherit; width: 100%; }
-select { border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.5rem; font: inherit; background: white; }
+.tools { display: flex; flex-direction: column; gap: 0.75rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 0.75rem; }
+.panel { padding: 1rem; }
+.panel h3 { margin: 0 0 0.55rem; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.row { display: flex; gap: 0.45rem; align-items: center; margin: 0.45rem 0; flex-wrap: wrap; }
+textarea, input { border: 1px solid var(--line); border-radius: 8px; padding: 0.4rem 0.55rem; font: inherit; width: 100%; background: var(--bg-raise); color: var(--ink); }
+select { border: 1px solid var(--line); border-radius: 8px; padding: 0.4rem 0.55rem; font: inherit; background: var(--bg-raise); color: var(--ink); }
 input { width: auto; flex: 1; min-width: 0; }
+input[type="checkbox"] { accent-color: var(--brand); width: 1rem; height: 1rem; flex: none; }
+input[type="color"] { width: 2.2rem; height: 1.8rem; padding: 0.1rem; flex: none; }
 input.flags { max-width: 4rem; flex: none; }
-label { display: flex; gap: 0.4rem; align-items: center; margin: 0.3rem 0; font-size: 0.85rem; }
-.btn.ghost.on { background: var(--ink); color: white; }
+label { display: flex; gap: 0.4rem; align-items: center; margin: 0.3rem 0; font-size: 0.85rem; color: var(--ink-dim); }
+.btn.ghost.on { background: rgb(232 106 44 / 0.14); color: var(--brand); border-color: rgb(232 106 44 / 0.4); }
 .hits { list-style: none; padding: 0; margin: 0.3rem 0; max-height: 120px; overflow-y: auto; }
-.out { white-space: pre-wrap; font-size: 0.78rem; max-height: 160px; overflow-y: auto; }
-code { font-family: ui-monospace, monospace; font-size: 0.78rem; word-break: break-all; }
-.error { color: var(--danger); }
+.out { white-space: pre-wrap; font-size: 0.78rem; max-height: 160px; overflow-y: auto; color: var(--ink-dim); }
+code { font-family: ui-monospace, monospace; font-size: 0.78rem; word-break: break-all; color: var(--ink-dim); }
+.error { color: var(--danger); font-size: 0.85rem; }
 .dim { color: var(--dim); font-size: 0.85rem; }
 </style>

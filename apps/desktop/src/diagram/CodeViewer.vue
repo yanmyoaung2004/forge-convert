@@ -58,7 +58,7 @@ function onImport(): void {
 <style scoped>
 .code {
   background: var(--panel);
-  border: 2px solid var(--brand);
+  border: 1px solid var(--line-soft);
   border-radius: 12px;
   padding: 0.7rem 0.8rem;
   display: flex;
@@ -66,7 +66,9 @@ function onImport(): void {
   gap: 0.5rem;
 }
 .code-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-.edited { color: var(--brand-deep); font-size: 0.8rem; font-weight: 700; }
+.code-head strong { font-size: 0.8rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dim); }
+.code-head .dim { font-size: 0.8rem; }
+.edited { color: var(--brand); font-size: 0.8rem; font-weight: 700; }
 .spacer { flex: 1; }
 .src {
   width: 100%;
@@ -78,8 +80,9 @@ function onImport(): void {
   border-radius: 8px;
   padding: 0.5rem;
   resize: vertical;
-  background: #fffdf9;
+  background: #0d0b09;
+  color: #d6cfc2;
 }
 .btn.sm { padding: 0.35rem 0.7rem; font-size: 0.82rem; }
-.btn.primary { background: var(--brand); border-color: var(--brand-deep); color: white; font-weight: 700; }
+.btn.primary { background: linear-gradient(135deg, var(--brand), var(--brand-deep)); border: 0; color: #fff; font-weight: 700; }
 </style>

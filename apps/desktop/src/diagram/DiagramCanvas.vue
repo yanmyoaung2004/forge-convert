@@ -661,8 +661,10 @@ defineExpose({ setTool, tool, holdToolKey, activeTool });
   min-width: 0;
   min-height: clamp(380px, 55vh, 720px);
   position: relative;
-  background: #fffdf9;
-  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.05) 1px, transparent 1.5px) 0 0 / 22px 22px,
+    #141110;
+  border: 1px solid var(--line-soft);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -681,7 +683,7 @@ defineExpose({ setTool, tool, holdToolKey, activeTool });
   cursor: grabbing;
 }
 .grid line {
-  stroke: #ece7dd;
+  stroke: rgb(255 255 255 / 0.05);
   stroke-width: 1;
 }
 .node {
